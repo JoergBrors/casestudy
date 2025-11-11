@@ -1,0 +1,25 @@
+{
+  "examples": [
+    "Annual_Report_2024",
+    "Customer_Contract",
+    "Invoice_2024_1001",
+    "Project_KAM-Alpha_Scope",
+    "Employee_Resume_Smith"
+  ],
+  "templates": [
+    "Customer_{CustomerId}_Contract",
+    "Invoice_{Year}_{InvoiceNumber}",
+    "Project_{ProjectCode}_Specs",
+    "Employee_{LastName}_{FirstName}_Resume",
+    "PurchaseOrder_{PO}"
+  ],
+  "placeholders": {
+    "CustomerId": ["CUST1001","CUST2002","CUST3003","CUST4004"],
+    "Year": [2022,2023,2024],
+    "InvoiceNumber": [1001,1002,1003,1400],
+    "ProjectCode": ["KAM-Alpha","KAM-Beta","KAM-Gamma","OP-Delta"],
+    "FirstName": ["John","Anna","Maria","Oscar","Lukas"],
+    "LastName": ["Müller","Schmidt","Meyer","Schneider","Fischer"],
+    "PO": ["PO1001","PO2222","PO4321"]
+  }
+}

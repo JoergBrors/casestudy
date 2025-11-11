@@ -1,0 +1,69 @@
+{
+  "BIS": {
+    "Rot": {
+      "displayName": "Hoch Vertraulich (Rot)",
+      "description": "Höchste Schutzstufe - Kreditkarten, Bankdaten, Sozialversicherungsnummern",
+      "detectionStrings": [
+        "IBAN: DE89 3704 0044 0532 0130 00",
+        "IBAN: DE12500105170648489890",
+        "IBAN: AT611904300234573201",
+        "4111 1111 1111 1111",
+        "5500 0000 0000 0004",
+        "3782 822463 10005",
+        "SSN: 123-45-6789",
+        "SSN: 987-65-4321",
+        "Tax ID: DE123456789",
+        "USt-IdNr: DE123456789",
+        "Steuernummer: 12/345/67890",
+        "Passport: C01X00T47",
+        "Reisepass Nr: C9876543",
+        "Personalausweis: L01X05T89",
+        "Kreditkarte: 4532-1234-5678-9010",
+        "CVV: 123",
+        "Ablaufdatum: 12/25"
+      ],
+      "insertionRate": 8
+    },
+    "Gelb": {
+      "displayName": "Vertraulich (Gelb)",
+      "description": "Mittlere Schutzstufe - PII, Kontaktdaten, Geburtsdaten",
+      "detectionStrings": [
+        "E-Mail: max.mustermann@beispiel.de",
+        "Email: john.doe@example.com",
+        "Telefon: +49 171 1234567",
+        "Phone: +49 89 12345678",
+        "Mobil: +49 160 98765432",
+        "DOB: 1980-01-01",
+        "Geburtsdatum: 15.03.1985",
+        "Geboren am: 22.07.1992",
+        "Adresse: Musterstraße 123, 12345 Berlin",
+        "Wohnort: Hamburg, Beispielweg 45",
+        "Personalnummer: EMP-2024-001234",
+        "Mitarbeiter-ID: MA-987654",
+        "Kundennummer: KD-45678",
+        "Vertragsnummer: VTR-2024-8901"
+      ],
+      "insertionRate": 15
+    },
+    "Grün": {
+      "displayName": "Intern (Grün)",
+      "description": "Interne Schutzstufe - Projektkennungen, interne Codes",
+      "detectionStrings": [
+        "Internal Project: Phoenix",
+        "Company Confidential",
+        "Vertraulich - Nur für internen Gebrauch",
+        "ProjectCode: KAM-Alpha",
+        "Projekt-ID: PRJ-2024-001",
+        "Cost Center: CC-4500",
+        "Kostenstelle: 1234-5678",
+        "Budget Code: BGT-Q4-2024",
+        "Internal Use Only",
+        "Nur für internen Gebrauch",
+        "Business Unit: Sales EMEA",
+        "Abteilung: IT-Security",
+        "Team: Development-Team-3"
+      ],
+      "insertionRate": 25
+    }
+  }
+}

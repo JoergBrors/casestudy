@@ -1,0 +1,11 @@
+﻿{
+    "BIS":  {
+                "Test":  {
+                             "displayName":  "TEST",
+                             "detectionStrings":  [
+                                                      "TEST-DETECT-111"
+                                                  ],
+                             "insertionRate":  100
+                         }
+            }
+}

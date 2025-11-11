@@ -1,0 +1,27 @@
+{
+  "topLevel": {
+    "count": 10,
+    "templates": [
+      "Sales",
+      "Finance",
+      "HR",
+      "IT",
+      "Legal",
+      "Operations",
+      "Marketing",
+      "R&D",
+      "Admin",
+      "Support"
+    ]
+  },
+  "subLevel": {
+    "count": 5,
+    "templates": [
+      "Contracts",
+      "Reports",
+      "Drafts",
+      "Exports",
+      "Archive"
+    ]
+  }
+}

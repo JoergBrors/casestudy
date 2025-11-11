@@ -1,0 +1,17 @@
+{
+  "Office": [
+    { "ext": ".docx", "minKB": 10, "maxKB": 200 },
+    { "ext": ".xlsx", "minKB": 5, "maxKB": 100 },
+    { "ext": ".pptx", "minKB": 50, "maxKB": 500 }
+  ],
+  "Text": [
+    { "ext": ".txt", "minKB": 1, "maxKB": 50 }
+  ],
+  "VSC": [
+    { "ext": ".zip", "minKB": 10, "maxKB": 1000 },
+    { "ext": ".tar.gz", "minKB": 10, "maxKB": 1000 }
+  ],
+  "Other": [
+    { "ext": ".pdf", "minKB": 50, "maxKB": 500 }
+  ]
+}
