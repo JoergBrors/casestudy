@@ -205,7 +205,9 @@ foreach ($sitKey in $allPatterns.Keys) {
             # For demonstration - actual implementation requires more complex XML definition
             Write-Host "    Pattern: $($sit.Pattern)" -ForegroundColor Gray
             Write-Host "    Confidence: $($sit.Confidence)%" -ForegroundColor Gray
-            Write-Host "    [Note: Use Compliance Center UI or detailed XML for full implementation]" -ForegroundColor DarkYellow
+            $sitNote = "[Note: Use Compliance Center UI or detailed XML for full implementation of custom Sensitive Information Types]"
+            Write-Host "    $sitNote" -ForegroundColor DarkYellow
+            try { Add-Content -Path (Join-Path $scriptPath 'purview-setup-warnings.log') -Value $sitNote -ErrorAction SilentlyContinue } catch {}
             
             # Placeholder - actual command would be:
             # New-DlpSensitiveInformationType -Name $sitName -Description $sit.Description -Regex $sit.Pattern
@@ -263,12 +265,19 @@ foreach ($label in $labels) {
         try {
             Write-Host "  Creating Label: $labelName" -ForegroundColor Yellow
             
+            # Note: some versions of the Compliance/Exchange cmdlets do not support a -Priority parameter.
+            # Use only supported parameters; publish/ordering can be handled in the Purview portal.
             New-Label `
                 -DisplayName $label.DisplayName `
                 -Name $labelName `
                 -Comment $label.Description `
-                -ToolTip $label.ToolTip `
-                -Priority $label.Priority
+                -ToolTip $label.ToolTip
+            
+            if ($label.Priority) {
+                $warningMsg = "Note: Label priority ($($label.Priority)) is not set via PowerShell. Configure ordering in the Purview portal if required."
+                Write-Host "    $warningMsg" -ForegroundColor DarkYellow
+                try { Add-Content -Path (Join-Path $scriptPath 'purview-setup-warnings.log') -Value $warningMsg -ErrorAction SilentlyContinue } catch {}
+            }
             
             Write-Host "    Created successfully!" -ForegroundColor Green
         }
@@ -297,16 +306,28 @@ else {
         $labelRot = Get-Label -Identity "BIS Rot - Hoch Vertraulich"
         
         if ($labelRot) {
-            New-AutoSensitivityLabelPolicy `
-                -Name $policyNameRot `
-                -Comment "Automatically applies 'Hoch Vertraulich' label based on sensitive content" `
-                -SharePointLocation All `
-                -OneDriveLocation All `
-                -ExchangeLocation All `
-                -Mode Simulate
-            
-            Write-Host "  Policy created in Simulation mode!" -ForegroundColor Green
-            Write-Host "  [Note: Change to 'Enable' mode after testing]" -ForegroundColor DarkYellow
+            # Determine label identifier to apply. The cmdlet requires the label id/identity.
+            $labelId = $null
+            if ($labelRot.PSObject.Properties.Match('Id')) { $labelId = $labelRot.Id }
+            if (-not $labelId -and $labelRot.PSObject.Properties.Match('Identity')) { $labelId = $labelRot.Identity }
+            if (-not $labelId) { $labelId = $labelRot.Name }
+
+            if (-not $labelId) {
+                Write-Warning "Could not determine an identifier for label 'BIS Rot - Hoch Vertraulich'. Auto-labeling policy will not be created."
+            }
+            else {
+                New-AutoSensitivityLabelPolicy `
+                    -Name $policyNameRot `
+                    -Comment "Automatically applies 'Hoch Vertraulich' label based on sensitive content" `
+                    -ApplySensitivityLabel $labelId `
+                    -SharePointLocation All `
+                    -OneDriveLocation All `
+                    -ExchangeLocation All `
+                    -Mode Simulate
+
+                Write-Host "  Policy created in Simulation mode!" -ForegroundColor Green
+                Write-Host "  [Note: Change to 'Enable' mode after testing]" -ForegroundColor DarkYellow
+            }
         }
     }
     catch {

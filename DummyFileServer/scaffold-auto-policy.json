@@ -1,0 +1,26 @@
+{
+  "displayName": "AutoLabel-BIS-Rot-Example",
+  "description": "Example auto-label policy scaffold referencing a label ID (replace labelId placeholder)",
+  "isEnabled": false,
+  "target": {
+    "locations": [ "sharepoint", "onedrive", "exchange" ],
+    "groups": []
+  },
+  "rules": [
+    {
+      "name": "Rule - BIS.Rot header",
+      "priority": 1,
+      "conditions": {
+        "matchAny": [
+          { "type": "containsHeader", "value": "<<BIS-ROT-TRIGGER>>" }
+        ]
+      },
+      "actions": {
+        "assignLabel": {
+          "labelId": "REPLACE_WITH_LABEL_ID",
+          "actionMode": "replace"
+        }
+      }
+    }
+  ]
+}

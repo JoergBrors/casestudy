@@ -115,6 +115,36 @@ Da die PowerShell-API für SITs begrenzt ist, erstellen Sie diese manuell:
   - Apply label: **BIS Rot - Hoch Vertraulich**
 - Mode: **Simulation mode** (zum Testen)
 
+### Hinweise & Warnungen vom Setup-Skript
+
+Das Setup-Skript schreibt Hinweise und Warnungen nach Laufzeit in die Datei `purview-setup-warnings.log` im selben Ordner wie das Skript. Typische Einträge:
+
+- "Note: Label priority (...) is not set via PowerShell..." — Die PowerShell-Module unterstützen nicht das Setzen der Label-Priorität; bitte konfigurieren Sie die Reihenfolge im Purview-Portal.
+- "[Note: Use Compliance Center UI or detailed XML for full implementation of custom Sensitive Information Types]" — Die Erstellung von Custom Sensitive Information Types (SIT) per PowerShell ist komplex; das Skript protokolliert die Notwendigkeit manueller Schritte.
+
+Sie können die Warnungen ansehen mit:
+
+```powershell
+Get-Content -Path "$(Join-Path $PSScriptRoot 'purview-setup-warnings.log')" -ErrorAction SilentlyContinue
+```
+
+Wenn Sie die Auto-Labeling Policy manuell per PowerShell erstellen möchten (z. B. weil das Skript den Label-Identifier nicht automatisch ermittelt), verwenden Sie die folgenden Schritte, um die Label-Id zu ermitteln und die Policy mit `-ApplySensitivityLabel` anzulegen:
+
+```powershell
+# 1. Label-Details anzeigen
+$label = Get-Label -Identity "BIS Rot - Hoch Vertraulich"
+$label | Format-List *
+
+# 2. Extrahieren der Id (Eigenschaft kann je nach Modul 'Id' oder 'Identity' heißen)
+$labelId = $label.Id
+if (-not $labelId) { $labelId = $label.Identity }
+
+# 3. Erstellen der Auto-Labeling Policy mit ApplySensitivityLabel
+New-AutoSensitivityLabelPolicy -Name "Auto-Label BIS Rot Policy" -Comment "Applies BIS Rot" -ApplySensitivityLabel $labelId -SharePointLocation All -OneDriveLocation All -ExchangeLocation All -Mode Simulate
+```
+
+Hinweis: Das Skript versucht, die Label-Id zu ermitteln; falls das fehlschlägt, erscheint eine Warnung und Sie müssen die Policy manuell anlegen oder die Id selbst bestimmen.
+
 **Policy 2: BIS Gelb (Vertraulich)**
 - Name: `Auto-Label BIS Gelb`
 - Conditions:
@@ -227,6 +257,76 @@ Add-PnPFile -Path "C:\share\Job1\Finance\Contracts\*.docx" -Folder "Shared Docum
 - Testen Sie mit bekannten SIT-Patterns
 
 ## Weitere Ressourcen
+
+## Preview: Sensitivity labels for Teams, groups and sites
+
+If you want sensitivity labels to be visible and applied to Teams, Microsoft 365 groups and SharePoint sites, there is a Purview preview feature "Sensitivity labels for Teams, groups and sites (preview)" that must be enabled in the Compliance portal. Enabling this preview allows labels and some publishing options to propagate to Teams/Groups/Sites.
+
+Steps to enable and verify the preview (portal):
+
+1. Open the Microsoft Purview compliance portal: https://compliance.microsoft.com
+2. Go to **Solutions > Information protection** (or search for "Sensitivity labels").
+3. Look for the preview toggle named "Sensitivity labels for Teams, groups and sites (preview)" and enable it. This option may be under a Preview or Settings area depending on your tenant UI.
+4. After enabling, create or publish a label and then assign or publish that label to groups/sites via the label policy UI. Label propagation may take some time to sync.
+
+Verification checklist:
+
+- Use `Get-Label` (PowerShell) or the portal to confirm the label exists and note its Id.
+- Create a small test Team or site and check its settings to see the sensitivity label listed.
+- Wait 10-15 minutes and check a test file in the Teams/SharePoint site for automatic labeling or label visibility.
+
+If the preview toggle is not visible, your tenant may not yet have the preview features enabled by Microsoft. In that case, use the portal to create and publish labels manually and follow Microsoft documentation for the most current steps.
+
+## Programmatic automation (Graph API) — scaffold and guidance
+
+Full programmatic automation to create and publish sensitivity labels and policies can be done but requires:
+
+- An Azure AD app registration with admin consent.
+- The correct Graph API permissions (application-level permissions such as `InformationProtectionPolicy.ReadWrite.All` or the least-privilege set required).
+- Careful testing in a dev tenant — some Graph label endpoints are in `beta` and might change.
+
+I added a scaffold script: `Publish-Labels-Graph.ps1` in this repo. It contains helper functions to:
+
+- Acquire an OAuth token using the client-credentials flow.
+- List existing labels via the Graph API.
+- Build a minimal label payload scaffold you can review before creating.
+
+How to register an app and get credentials (summary):
+
+1. In Azure AD, register a new app (App registrations > New registration).
+2. Add a client secret (Certificates & secrets > New client secret).
+3. Under API permissions, add the Microsoft Graph application permission `InformationProtectionPolicy.ReadWrite.All` and any other needed permissions. Click "Grant admin consent".
+4. Save the Tenant ID, Client ID and Client Secret for use with the scaffold script.
+
+Quick example (PowerShell) to get a token and list labels using the scaffold:
+
+```powershell
+# Update with your tenant/app values
+$tenant = 'YOUR_TENANT_ID_OR_DOMAIN'
+$clientId = 'YOUR_CLIENT_ID'
+$clientSecret = 'YOUR_CLIENT_SECRET'
+
+# dot-source or import the scaffold script
+. .\Publish-Labels-Graph.ps1
+
+$token = Get-GraphToken-ClientCredential -TenantId $tenant -ClientId $clientId -ClientSecret $clientSecret
+$labels = Get-Graph-Labels -AccessToken $token -UseBeta
+$labels.value | Select-Object id, displayName
+```
+
+To create a label from the scaffold, review the scaffold payload and then call the POST endpoint. The scaffold intentionally prints the payload and requires you to uncomment the create call after review.
+
+Important notes:
+
+- The script in this repo is a scaffold to help automation. Confirm endpoint URIs and payloads against Microsoft Graph docs for the exact Graph version you plan to use.
+- Publishing labels to Teams/Groups/Sites may still require the preview toggle to be enabled and label policies to be configured via the portal or additional API calls. The Graph-based publishing surface can be complex and tenant-dependent.
+
+If you want, I can now:
+
+- a) Flesh out `Publish-Labels-Graph.ps1` to include label-publishing payloads and examples for creating auto-label policies (I will add cautionary dry-run flags and require explicit confirmation before write operations), or
+- b) Keep the scaffold as-is and add a small runner script that: (1) creates a label, (2) waits for creation, (3) creates a sample auto-labeling policy referencing the label ID — I will implement safe confirmations and logging.
+
+Tell me which you'd prefer and I will implement it next.
 
 ### Microsoft Learn
 - [Sensitivity Labels Overview](https://learn.microsoft.com/en-us/purview/sensitivity-labels)

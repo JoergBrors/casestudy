@@ -1,0 +1,12 @@
+{
+  "displayName": "BIS.Rot.Example",
+  "description": "Example BIS.Rot label scaffold - review and edit before use",
+  "isActive": true,
+  "tooltip": "BIS.Rot - High sensitivity",
+  "assignmentMethod": "manual",
+  "\u0024schema": "https://graph.microsoft.com/beta/informationProtection/policy/label",
+  "settings": {
+    "defaultAction": null,
+    "actions": []
+  }
+}
