@@ -1,0 +1,5 @@
+{
+  "name": "ROT_Statistics",
+  "query": "SELECT * FROM vw_rot_statistics;",
+  "output": "rot_statistics.csv"
+}

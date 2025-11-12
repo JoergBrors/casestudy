@@ -1,0 +1,5 @@
+{
+  "name": "ROT_Overview",
+  "query": "SELECT * FROM vw_rot_overview;",
+  "output": "rot_overview.csv"
+}

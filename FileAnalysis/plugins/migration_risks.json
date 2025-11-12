@@ -1,0 +1,5 @@
+{
+  "name": "Migration_Risks",
+  "query": "SELECT * FROM vw_migration_risks;",
+  "output": "migration_risks.csv"
+}

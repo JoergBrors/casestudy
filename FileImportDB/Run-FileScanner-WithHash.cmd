@@ -8,11 +8,11 @@ REM ===================================================================
 setlocal
 
 REM Konfiguration
-set SCAN_ROOT=C:\Repo\casestudy\DummyFileServer-Output
+set SCAN_ROOT=C:\share
 set SQL_SERVER=localhost
 set SQL_DATABASE=FileImportDB
 set BATCH_SIZE=100
-set WORKERS=8
+set WORKERS=20
 
 REM Prüfe ob Scan-Root angegeben wurde
 if "%~1" neq "" set SCAN_ROOT=%~1
