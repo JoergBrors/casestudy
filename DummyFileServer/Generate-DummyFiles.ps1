@@ -7,6 +7,7 @@ param(
     [string]$FileTypesConfig = "./config/file_types.json",
     [string]$FileNamesConfig = "./config/file_names.json",
     [string]$SensitiveLabelsConfig = "./config/sensitive_labels.json",
+    [string]$FileAgeDistributionConfig = "./config/file_age_distribution.json",
     [int]$TopLevelCount = 10,
     [int]$SubLevelCount = 5,
     [int]$TotalOfficeFiles = 100,
@@ -97,35 +98,115 @@ function New-DummyFileFallback {
     finally { $stream.Close() }
 }
 
-function Set-RandomFileTimestamps {
+function Get-FileAgeCategory {
+    param([hashtable]$AgeConfig, [int]$FileIndex, [int]$TotalFiles)
+    
+    # Calculate cumulative percentages to assign category
+    $rand = Get-Random -Minimum 0 -Maximum 100
+    $cumulative = 0
+    
+    foreach ($dist in $AgeConfig.distributions) {
+        $cumulative += $dist.percentage
+        if ($rand -lt $cumulative) {
+            return $dist
+        }
+    }
+    
+    # Fallback to last category
+    return $AgeConfig.distributions[-1]
+}
+
+function Set-FileTimestampsFromDistribution {
     param(
         [string]$FilePath,
-        [int]$MinDaysAgo = 730,  # Default: up to 2 years ago
-        [int]$MaxDaysAgo = 1
+        [object]$Distribution,
+        [datetime]$BaseDate,
+        [hashtable]$TimeVariance,
+        [ref]$VersionCounter
     )
     
     if (-not (Test-Path $FilePath)) { return }
     
     $rand = New-Object System.Random
-    $now = Get-Date
+    $now = $BaseDate
     
-    # Random creation time (older)
-    $createdDaysAgo = $rand.Next($MaxDaysAgo, $MinDaysAgo + 1)
-    $createdTime = $now.AddDays(-$createdDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    # Calculate creation time based on age distribution
+    $creationYears = $Distribution.creation_age_years.min + 
+                     ($rand.NextDouble() * ($Distribution.creation_age_years.max - $Distribution.creation_age_years.min))
+    $creationDays = [int]($creationYears * 365.25)
     
-    # Random modified time (between creation and now)
-    $modifiedDaysAgo = $rand.Next($MaxDaysAgo, $createdDaysAgo + 1)
-    $modifiedTime = $now.AddDays(-$modifiedDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    # Add random time variance for natural distribution
+    $createdTime = $now.AddDays(-$creationDays)
+    if ($TimeVariance) {
+        $createdTime = $createdTime.AddHours($rand.Next($TimeVariance.hours_min, $TimeVariance.hours_max + 1))
+        $createdTime = $createdTime.AddMinutes($rand.Next($TimeVariance.minutes_min, $TimeVariance.minutes_max + 1))
+    }
     
-    # Random access time (between modified and now)
-    $accessedDaysAgo = $rand.Next($MaxDaysAgo, $modifiedDaysAgo + 1)
-    $accessedTime = $now.AddDays(-$accessedDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    # Handle modification time based on pattern
+    $modifiedTime = $createdTime
+    
+    if ($Distribution.modification_pattern -eq 'yearly_versions') {
+        # File wird jedes Jahr aktualisiert mit Versionsnummer
+        $yearsSinceCreation = [int]$creationYears
+        $versionsToCreate = $yearsSinceCreation * $Distribution.versions_per_year
+        
+        if ($versionsToCreate -gt 0) {
+            # Letzte Version ist die aktuellste
+            $lastVersionYear = [int]($rand.Next(1, $versionsToCreate + 1))
+            $modYears = $creationYears - ($lastVersionYear / $Distribution.versions_per_year)
+            $modDays = [int]($modYears * 365.25)
+            $modifiedTime = $now.AddDays(-$modDays)
+            
+            if ($TimeVariance) {
+                $modifiedTime = $modifiedTime.AddHours($rand.Next($TimeVariance.hours_min, $TimeVariance.hours_max + 1))
+                $modifiedTime = $modifiedTime.AddMinutes($rand.Next($TimeVariance.minutes_min, $TimeVariance.minutes_max + 1))
+            }
+            
+            # Increment version counter for tracking
+            if ($VersionCounter) {
+                $VersionCounter.Value++
+            }
+        }
+    }
+    elseif ($Distribution.modification_age_years) {
+        # Standard modification: random time within the specified range
+        $modYears = $Distribution.modification_age_years.min + 
+                   ($rand.NextDouble() * ($Distribution.modification_age_years.max - $Distribution.modification_age_years.min))
+        $modDays = [int]($modYears * 365.25)
+        
+        # Ensure modification is not before creation
+        $modifiedTime = $now.AddDays(-$modDays)
+        if ($modifiedTime -lt $createdTime) {
+            $modifiedTime = $createdTime.AddDays($rand.Next(1, 365))
+        }
+        
+        if ($TimeVariance) {
+            $modifiedTime = $modifiedTime.AddHours($rand.Next($TimeVariance.hours_min, $TimeVariance.hours_max + 1))
+            $modifiedTime = $modifiedTime.AddMinutes($rand.Next($TimeVariance.minutes_min, $TimeVariance.minutes_max + 1))
+        }
+    }
+    
+    # Access time: random between modified and now
+    $daysBetween = ($now - $modifiedTime).Days
+    if ($daysBetween -gt 0) {
+        $accessDaysAgo = $rand.Next(0, $daysBetween + 1)
+        $accessedTime = $now.AddDays(-$accessDaysAgo)
+    } else {
+        $accessedTime = $modifiedTime
+    }
+    
+    if ($TimeVariance) {
+        $accessedTime = $accessedTime.AddHours($rand.Next($TimeVariance.hours_min, $TimeVariance.hours_max + 1))
+        $accessedTime = $accessedTime.AddMinutes($rand.Next($TimeVariance.minutes_min, $TimeVariance.minutes_max + 1))
+    }
     
     try {
         $file = Get-Item $FilePath
         $file.CreationTime = $createdTime
         $file.LastWriteTime = $modifiedTime
         $file.LastAccessTime = $accessedTime
+        
+        Write-Verbose "Set timestamps for $FilePath - Created: $createdTime, Modified: $modifiedTime (Category: $($Distribution.name))"
     }
     catch {
         Write-Verbose "Could not set timestamps for $FilePath : $_"
@@ -226,6 +307,49 @@ function Expand-Template {
     return $res
 }
 
+function New-DeepPathStructure {
+    param(
+        [string]$BasePath,
+        [object]$DeepPathConfig,
+        [int]$AdditionalLevels
+    )
+    
+    $currentPath = $BasePath
+    $levelTemplates = $DeepPathConfig.levelTemplates
+    $placeholders = $DeepPathConfig.placeholders
+    
+    for ($i = 0; $i -lt $AdditionalLevels; $i++) {
+        # Wähle ein Template
+        $template = Random-FromList $levelTemplates
+        
+        # Ersetze Platzhalter
+        $vars = @{}
+        if ($placeholders) {
+            foreach ($prop in $placeholders.PSObject.Properties) {
+                $key = $prop.Name
+                $values = $prop.Value
+                if ($values -is [array] -and $values.Count -gt 0) {
+                    $vars[$key] = Random-FromList $values
+                }
+            }
+        }
+        
+        $dirName = if ($vars.Count -gt 0) {
+            Expand-Template $template $vars
+        } else {
+            $template
+        }
+        
+        $currentPath = Join-Path $currentPath $dirName
+        
+        if (-not (Test-Path $currentPath)) {
+            New-Item -Path $currentPath -ItemType Directory -Force | Out-Null
+        }
+    }
+    
+    return $currentPath
+}
+
 Write-Host "Starting Dummy File Server generator"
 if ($Seed -ne 0) { Set-Random -Seed $Seed }
 
@@ -233,11 +357,13 @@ $dirCfg = Load-JsonFile $DirectoryConfig
 $typesCfg = Load-JsonFile $FileTypesConfig
 $namesCfg = Load-JsonFile $FileNamesConfig
 $labelsCfg = Load-JsonFile $SensitiveLabelsConfig
+$ageDistCfg = Load-JsonFile $FileAgeDistributionConfig
 
 if (-not $dirCfg) { Write-Warning "Directory config not found, using defaults" }
 if (-not $typesCfg) { Write-Warning "File types config not found, using built-ins" }
 if (-not $namesCfg) { Write-Warning "File names config not found, using built-ins" }
 if (-not $labelsCfg) { Write-Warning "Sensitive labels config not found, using built-ins" }
+if (-not $ageDistCfg) { Write-Warning "Age distribution config not found, using defaults" }
 
 # Default templates
 if (-not $dirCfg) {
@@ -296,11 +422,32 @@ if (-not $labelsCfg) {
     }
 }
 
+# Age distribution defaults
+if (-not $ageDistCfg) {
+    $ageDistCfg = @{
+        base_date = (Get-Date).ToString('yyyy-MM-dd')
+        distributions = @(
+            @{ name = 'sehr_alt_mit_versionen'; percentage = 5; creation_age_years = @{ min = 14; max = 15 }; modification_pattern = 'yearly_versions'; versions_per_year = 1 }
+            @{ name = 'sehr_alt'; percentage = 5; creation_age_years = @{ min = 10; max = 14 }; modification_age_years = @{ min = 8; max = 12 } }
+            @{ name = 'alt'; percentage = 30; creation_age_years = @{ min = 5; max = 10 }; modification_age_years = @{ min = 2; max = 8 } }
+            @{ name = 'mittel'; percentage = 40; creation_age_years = @{ min = 2; max = 4 }; modification_age_years = @{ min = 0.5; max = 3 } }
+            @{ name = 'neuere'; percentage = 15; creation_age_years = @{ min = 0.5; max = 2 }; modification_age_years = @{ min = 0.1; max = 1.5 } }
+            @{ name = 'ganz_neu'; percentage = 5; creation_age_years = @{ min = 0.01; max = 0.5 }; modification_age_years = @{ min = 0.01; max = 0.3 } }
+        )
+        time_variance = @{ hours_min = 0; hours_max = 23; minutes_min = 0; minutes_max = 59 }
+    }
+}
+
 $useFs = $UseFsutil.IsPresent -and (Test-Fsutil)
 if ($UseFsutil.IsPresent -and -not $useFs) { Write-Warning "fsutil is not available; falling back to pure PowerShell file creation" }
 
 [int]$createdDirs=0
 [int]$createdFiles=0
+[int]$versionedFiles=0
+
+# Parse base date from config
+$baseDate = if ($ageDistCfg.base_date) { [DateTime]::Parse($ageDistCfg.base_date) } else { Get-Date }
+$timeVariance = if ($ageDistCfg.time_variance) { $ageDistCfg.time_variance } else { @{ hours_min = 0; hours_max = 23; minutes_min = 0; minutes_max = 59 } }
 
 if ($DryRun) { Write-Host "Dry-run: no changes will be made" }
 
@@ -318,6 +465,14 @@ $subMinCount = if ($dirCfg.subLevel.minCount) { $dirCfg.subLevel.minCount } else
 $subMaxCount = if ($dirCfg.subLevel.maxCount) { $dirCfg.subLevel.maxCount } else { $SubLevelCount }
 $useParentPrefix = if ($dirCfg.subLevel.useParentPrefix) { $dirCfg.subLevel.useParentPrefix } else { $false }
 $parentPrefixProb = if ($dirCfg.subLevel.parentPrefixProbability) { [int]($dirCfg.subLevel.parentPrefixProbability * 100) } else { 0 }
+
+# Deep path configuration
+$deepPathEnabled = if ($dirCfg.deepPaths -and $dirCfg.deepPaths.enabled) { $dirCfg.deepPaths.enabled } else { $false }
+$deepPathProb = if ($dirCfg.deepPaths -and $dirCfg.deepPaths.probability) { [int]($dirCfg.deepPaths.probability * 100) } else { 10 }
+$deepPathMinLevels = if ($dirCfg.deepPaths -and $dirCfg.deepPaths.additionalLevels -and $dirCfg.deepPaths.additionalLevels.min) { $dirCfg.deepPaths.additionalLevels.min } else { 3 }
+$deepPathMaxLevels = if ($dirCfg.deepPaths -and $dirCfg.deepPaths.additionalLevels -and $dirCfg.deepPaths.additionalLevels.max) { $dirCfg.deepPaths.additionalLevels.max } else { 6 }
+
+[int]$deepPathCount = 0
 
 for ($i=0; $i -lt $TopLevelCount; $i++) {
     $t = if ($i -lt $topTemplates.Count) { $topTemplates[$i] } else { $topTemplates[(Get-Random -Maximum $topTemplates.Count)] }
@@ -342,11 +497,25 @@ for ($i=0; $i -lt $TopLevelCount; $i++) {
         $subPath = Join-Path $topPath $subName
         if (-not $DryRun) { New-Item -Path $subPath -ItemType Directory -Force | Out-Null }
         $createdDirs++
-        $dirList.Add($subPath)
+        
+        # Entscheide ob dieser Pfad eine tiefe Struktur bekommt (ca. 10%)
+        $finalPath = $subPath
+        if ($deepPathEnabled -and (Get-Random -Minimum 0 -Maximum 100) -lt $deepPathProb) {
+            $additionalLevels = Get-Random -Minimum $deepPathMinLevels -Maximum ($deepPathMaxLevels + 1)
+            if (-not $DryRun) {
+                $finalPath = New-DeepPathStructure -BasePath $subPath -DeepPathConfig $dirCfg.deepPaths -AdditionalLevels $additionalLevels
+                $createdDirs += $additionalLevels
+                $deepPathCount++
+                $pathLength = $finalPath.Length
+                Write-Verbose "Created deep path ($pathLength chars): $finalPath"
+            }
+        }
+        
+        $dirList.Add($finalPath)
     }
 }
 
-Write-Host "Created/Prepared $createdDirs directories. Will create files across $($dirList.Count) directories."
+Write-Host "Created/Prepared $createdDirs directories (including $deepPathCount deep path structures). Will create files across $($dirList.Count) directories."
 
 # Build list of all file type entries
 $allTypes = @()
@@ -470,8 +639,9 @@ foreach ($dir in $dirList) {
                 }
             }
 
-            # Set random file timestamps for realism
-            Set-RandomFileTimestamps -FilePath $fullPath -MinDaysAgo 730 -MaxDaysAgo 1
+            # Set file timestamps based on realistic age distribution
+            $ageCategory = Get-FileAgeCategory -AgeConfig $ageDistCfg -FileIndex $createdFiles -TotalFiles $TotalOfficeFiles
+            Set-FileTimestampsFromDistribution -FilePath $fullPath -Distribution $ageCategory -BaseDate $baseDate -TimeVariance $timeVariance -VersionCounter ([ref]$versionedFiles)
 
             $createdFiles++
         }
@@ -481,4 +651,13 @@ foreach ($dir in $dirList) {
     }
 }
 
-Write-Host "Created $createdFiles files. Done."
+Write-Host "Created $createdFiles files (including $versionedFiles with yearly versioning pattern). Done."
+Write-Host "Age distribution applied based on: $($ageDistCfg.distributions.Count) categories"
+Write-Host "Deep path structures created: $deepPathCount (targeting ~10% for paths > 400 characters)"
+
+# Zeige Statistik für lange Pfade
+$longPaths = 0
+foreach ($dir in $dirList) {
+    if ($dir.Length -gt 400) { $longPaths++ }
+}
+Write-Host "Directories with path length > 400 chars: $longPaths of $($dirList.Count) ($([Math]::Round($longPaths / $dirList.Count * 100, 1))%)"

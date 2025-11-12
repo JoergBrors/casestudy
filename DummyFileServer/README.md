@@ -15,6 +15,7 @@ Dieses Repository enthält ein PowerShell-Skript, das zufällige Dummy-Dateien u
 - `config/file_types.json`: Dateitypen mit Größen (minKB, maxKB)
 - `config/file_names.json`: Dateinamens-Vorlagen und Beispielwerte
 - `config/sensitive_labels.json`: BIS Ampel (Rot/Gelb/Grün) mit Detektionsmustern
+- `config/file_age_distribution.json`: **NEU** - Realistische Zeitstempel-Verteilung für einen 15 Jahre alten Fileserver
 
 ### Weitere Skripte
 - `verify-output.ps1`: Prüfung und Statistik der erzeugten Dateien
@@ -28,6 +29,7 @@ Dieses Repository enthält ein PowerShell-Skript, das zufällige Dummy-Dateien u
 - Optional wird `fsutil file createnew` verwendet, um Dateien einer bestimmten Größe zu erstellen. Falls `fsutil` nicht verfügbar ist oder nicht funktioniert, fällt das Skript auf einen PowerShell-Fallback zurück, der die Datei mit zufälligen Bytes schreibt
 - Es gibt eine Möglichkeit, sensitive Strings in Dateien zu injizieren, gemäß den BIS Ampel Vorgaben (Rot/Gelb/Grün). Diese dienen dazu, DLP-Policies zu testen
 - **NEU**: Parallele Generierung mit mehreren Jobs für schnellere Erzeugung großer Datenmengen
+- **NEU**: Realistische Zeitstempel-Verteilung simuliert einen 15 Jahre alten Fileserver mit verschiedenen Altersklassen
 
 ## Schnellstart
 
@@ -85,12 +87,32 @@ PowerShell -ExecutionPolicy Bypass -File .\Manage-Jobs.ps1 -Action CleanUp
 PowerShell -ExecutionPolicy Bypass -File .\Manage-Jobs.ps1 -Action Export -ExportPath "C:\logs"
 ```
 
+## Realistische Zeitstempel-Verteilung
+
+Das Skript simuliert einen 15 Jahre alten Fileserver mit folgender Altersverteilung:
+
+| Kategorie | Anteil | Erstellungsalter | Änderungsverhalten | Beschreibung |
+|-----------|--------|------------------|-------------------|--------------|
+| **Sehr alt mit Versionen** | 5% | 14-15 Jahre | Jährlich aktualisiert | Dateien die seit 15 Jahren existieren und kontinuierlich gepflegt werden |
+| **Sehr alt** | 5% | 10-14 Jahre | Selten geändert (8-12 Jahre alt) | Archive, alte Dokumentation |
+| **Alt** | 30% | 5-10 Jahre | Gelegentlich geändert (2-8 Jahre) | Ältere Projekte, Verträge |
+| **Mittel** | 40% | 2-4 Jahre | Regelmäßig geändert (0.5-3 Jahre) | Aktive Projekte, laufende Arbeiten |
+| **Neuere** | 15% | 0.5-2 Jahre | Häufig geändert (0.1-1.5 Jahre) | Aktuelle Projekte |
+| **Ganz neu** | 5% | < 6 Monate | Sehr aktuell (< 3 Monate) | Brandneue Dokumente |
+
+**Besonderheiten:**
+- Zeitstempel berücksichtigen realistische Tageszeiten und Minuten-Varianz
+- Garantiert logische Reihenfolge: Erstellungsdatum ≤ Änderungsdatum ≤ Zugriffsdatum
+- 5% der Dateien simulieren "lebende Dokumente" die seit 15 Jahren jährlich versioniert werden
+- Vollständig konfigurierbar über `config/file_age_distribution.json`
+
 Optionen (ausführliche)
 - `-RootPath` Zielverzeichnis
 - `-DirectoryConfig` Pfad zur JSON-Datei mit Templates für Verzeichnisnamen
 - `-FileTypesConfig` Datei mit Dateitypen und Größen
 - `-FileNamesConfig` Datei mit Beispielen/ Vorlagen für Dateinamen
 - `-SensitiveLabelsConfig` JSON mit Sensitivity (BIS Ampel) - detection strings
+- `-FileAgeDistributionConfig` **NEU** - JSON mit Zeitstempel-Verteilung für realistische Datei-Alter
 - `-TopLevelCount`, `-SubLevelCount` Anzahl Level erzeugen
 - `-TotalOfficeFiles` Ungefähr gewünschte Anzahl Office-Dateien
 - `-UseFsutil` (Switch) Nutze fsutil falls vorhanden, sonst fallback

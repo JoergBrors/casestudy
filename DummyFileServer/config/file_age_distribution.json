@@ -1,0 +1,89 @@
+{
+  "description": "Zeitstempel-Verteilung für einen realistischen 15 Jahre alten Fileserver",
+  "base_date": "2025-11-12",
+  "distributions": [
+    {
+      "name": "sehr_alt_mit_versionen",
+      "percentage": 5,
+      "creation_age_years": {
+        "min": 14,
+        "max": 15
+      },
+      "modification_pattern": "yearly_versions",
+      "versions_per_year": 1,
+      "description": "Dateien die vor 15 Jahren erstellt wurden und jährlich aktualisiert werden"
+    },
+    {
+      "name": "sehr_alt",
+      "percentage": 5,
+      "creation_age_years": {
+        "min": 10,
+        "max": 14
+      },
+      "modification_age_years": {
+        "min": 8,
+        "max": 12
+      },
+      "description": "Sehr alte Dateien, selten geändert"
+    },
+    {
+      "name": "alt",
+      "percentage": 30,
+      "creation_age_years": {
+        "min": 5,
+        "max": 10
+      },
+      "modification_age_years": {
+        "min": 2,
+        "max": 8
+      },
+      "description": "Ältere Dateien aus 5-10 Jahren"
+    },
+    {
+      "name": "mittel",
+      "percentage": 40,
+      "creation_age_years": {
+        "min": 2,
+        "max": 4
+      },
+      "modification_age_years": {
+        "min": 0.5,
+        "max": 3
+      },
+      "description": "Mittelalte Dateien aus 2-4 Jahren"
+    },
+    {
+      "name": "neuere",
+      "percentage": 15,
+      "creation_age_years": {
+        "min": 0.5,
+        "max": 2
+      },
+      "modification_age_years": {
+        "min": 0.1,
+        "max": 1.5
+      },
+      "description": "Neuere Dateien aus letzten 2 Jahren"
+    },
+    {
+      "name": "ganz_neu",
+      "percentage": 5,
+      "creation_age_years": {
+        "min": 0.01,
+        "max": 0.5
+      },
+      "modification_age_years": {
+        "min": 0.01,
+        "max": 0.3
+      },
+      "description": "Sehr neue Dateien aus letzten 6 Monaten"
+    }
+  ],
+  "time_variance": {
+    "description": "Zusätzliche Zufallsvariation in Stunden für natürlichere Zeitstempel",
+    "hours_min": 0,
+    "hours_max": 23,
+    "minutes_min": 0,
+    "minutes_max": 59
+  }
+}
