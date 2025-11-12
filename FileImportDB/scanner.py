@@ -29,6 +29,19 @@ try:
 except Exception:
     pyodbc = None  # type: ignore
     _HAS_PYODBC = False
+
+# Optional imports for Windows metadata
+try:
+    import win32security  # type: ignore
+    import win32api  # type: ignore
+    import win32con  # type: ignore
+    _HAS_PYWIN32 = True
+except Exception:
+    win32security = None  # type: ignore
+    win32api = None  # type: ignore
+    win32con = None  # type: ignore
+    _HAS_PYWIN32 = False
+
 import fnmatch
 
 
@@ -37,20 +50,39 @@ def init_db(conn: sqlite3.Connection) -> None:
     cur.executescript("""
     PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS files (
-        path TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT UNIQUE NOT NULL,
         name TEXT,
         dir TEXT,
         extension TEXT,
         size INTEGER,
-        mtime REAL,
-        ctime REAL,
-        atime REAL,
+        mtime_unix REAL,
+        ctime_unix REAL,
+        atime_unix REAL,
+        mtime_datetime TEXT,
+        ctime_datetime TEXT,
+        atime_datetime TEXT,
         is_readonly INTEGER,
+        is_hidden INTEGER,
+        is_system INTEGER,
+        is_archive INTEGER,
         attributes TEXT,
         sha256 TEXT,
-        scanned_at REAL
+        md5 TEXT,
+        path_length INTEGER,
+        path_depth INTEGER,
+        owner TEXT,
+        file_version TEXT,
+        scanned_at_unix REAL,
+        scanned_at_datetime TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_files_dir ON files(dir);
+    CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
+    CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
+    CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime_datetime);
+    CREATE INDEX IF NOT EXISTS idx_files_path_length ON files(path_length);
+    CREATE INDEX IF NOT EXISTS idx_files_scanned_at ON files(scanned_at_datetime);
+    CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
     """)
     conn.commit()
 
@@ -82,6 +114,86 @@ def compute_sha256(path: str, block_size: int = 4 * 1024 * 1024) -> Optional[str
         return None
 
 
+def compute_md5(path: str, block_size: int = 4 * 1024 * 1024) -> Optional[str]:
+    try:
+        h = hashlib.md5()
+        with open(path, 'rb') as f:
+            while True:
+                data = f.read(block_size)
+                if not data:
+                    break
+                h.update(data)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def unix_to_datetime(timestamp: float) -> str:
+    """Convert Unix timestamp to ISO datetime string"""
+    try:
+        from datetime import datetime
+        return datetime.fromtimestamp(timestamp).isoformat()
+    except Exception:
+        return None
+
+
+def get_file_owner(path: str) -> Optional[str]:
+    """Get file owner (Windows or Unix)"""
+    try:
+        if sys.platform == 'win32':
+            import win32security
+            sd = win32security.GetFileSecurity(path, win32security.OWNER_SECURITY_INFORMATION)
+            owner_sid = sd.GetSecurityDescriptorOwner()
+            name, domain, type = win32security.LookupAccountSid(None, owner_sid)
+            return f"{domain}\\{name}" if domain else name
+        else:
+            import pwd
+            stat_info = os.stat(path)
+            return pwd.getpwuid(stat_info.st_uid).pw_name
+    except Exception:
+        return None
+
+
+def get_file_version(path: str) -> Optional[str]:
+    """Get file version info (Windows only)"""
+    try:
+        if sys.platform == 'win32':
+            import win32api
+            info = win32api.GetFileVersionInfo(path, '\\')
+            ms = info['FileVersionMS']
+            ls = info['FileVersionLS']
+            return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+    except Exception:
+        pass
+    return None
+
+
+def get_windows_attributes(path: str) -> Tuple[bool, bool, bool, str]:
+    """Get Windows file attributes: hidden, system, archive, and raw attributes string"""
+    try:
+        if sys.platform == 'win32':
+            import win32api
+            import win32con
+            attrs = win32api.GetFileAttributes(path)
+            is_hidden = bool(attrs & win32con.FILE_ATTRIBUTE_HIDDEN)
+            is_system = bool(attrs & win32con.FILE_ATTRIBUTE_SYSTEM)
+            is_archive = bool(attrs & win32con.FILE_ATTRIBUTE_ARCHIVE)
+            
+            # Build attribute string
+            attr_list = []
+            if attrs & win32con.FILE_ATTRIBUTE_READONLY: attr_list.append('READONLY')
+            if attrs & win32con.FILE_ATTRIBUTE_HIDDEN: attr_list.append('HIDDEN')
+            if attrs & win32con.FILE_ATTRIBUTE_SYSTEM: attr_list.append('SYSTEM')
+            if attrs & win32con.FILE_ATTRIBUTE_ARCHIVE: attr_list.append('ARCHIVE')
+            if attrs & win32con.FILE_ATTRIBUTE_COMPRESSED: attr_list.append('COMPRESSED')
+            if attrs & win32con.FILE_ATTRIBUTE_ENCRYPTED: attr_list.append('ENCRYPTED')
+            
+            return is_hidden, is_system, is_archive, '|'.join(attr_list)
+    except Exception:
+        pass
+    return False, False, False, None
+
+
 def process_path(args: Tuple[str, bool]) -> Tuple[str, Dict[str, Any]]:
     path, do_hash = args
     try:
@@ -94,23 +206,52 @@ def process_path(args: Tuple[str, bool]) -> Tuple[str, Dict[str, Any]]:
         ctime = getattr(st, 'st_ctime', None)
         atime = st.st_atime
         is_readonly = int(not os.access(path, os.W_OK))
-        attributes = None
+        
+        # Get Windows-specific attributes
+        is_hidden, is_system, is_archive, attributes = get_windows_attributes(path)
+        
+        # Calculate path metrics
+        path_length = len(path)
+        path_depth = path.count(os.sep)
+        
+        # Get owner (optional, may require pywin32)
+        owner = get_file_owner(path)
+        
+        # Get file version (Windows only)
+        file_version = get_file_version(path)
+        
         sha = None
+        md5_hash = None
         if do_hash:
             sha = compute_sha256(path)
+            md5_hash = compute_md5(path)
 
+        scanned_at = time.time()
+        
         return path, {
             'name': name,
             'dir': dirn,
             'extension': ext,
             'size': size,
-            'mtime': mtime,
-            'ctime': ctime,
-            'atime': atime,
+            'mtime_unix': mtime,
+            'ctime_unix': ctime,
+            'atime_unix': atime,
+            'mtime_datetime': unix_to_datetime(mtime),
+            'ctime_datetime': unix_to_datetime(ctime),
+            'atime_datetime': unix_to_datetime(atime),
             'is_readonly': is_readonly,
+            'is_hidden': int(is_hidden),
+            'is_system': int(is_system),
+            'is_archive': int(is_archive),
             'attributes': attributes,
             'sha256': sha,
-            'scanned_at': time.time()
+            'md5': md5_hash,
+            'path_length': path_length,
+            'path_depth': path_depth,
+            'owner': owner,
+            'file_version': file_version,
+            'scanned_at_unix': scanned_at,
+            'scanned_at_datetime': unix_to_datetime(scanned_at)
         }
     except Exception:
         return path, {'error': True}
@@ -129,7 +270,6 @@ def batched(iterable: Iterable, batch_size: int):
 
 def insert_batch(conn: sqlite3.Connection, rows: List[Tuple[str, Dict[str, Any]]]) -> None:
     cur = conn.cursor()
-    now = time.time()
     to_upsert = []
     for path, meta in rows:
         if meta.get('error'):
@@ -140,13 +280,25 @@ def insert_batch(conn: sqlite3.Connection, rows: List[Tuple[str, Dict[str, Any]]
             meta['dir'],
             meta['extension'],
             meta['size'],
-            meta['mtime'],
-            meta['ctime'],
-            meta['atime'],
+            meta['mtime_unix'],
+            meta['ctime_unix'],
+            meta['atime_unix'],
+            meta.get('mtime_datetime'),
+            meta.get('ctime_datetime'),
+            meta.get('atime_datetime'),
             meta['is_readonly'],
+            meta.get('is_hidden', 0),
+            meta.get('is_system', 0),
+            meta.get('is_archive', 0),
             meta['attributes'],
             meta['sha256'],
-            meta['scanned_at']
+            meta.get('md5'),
+            meta.get('path_length', 0),
+            meta.get('path_depth', 0),
+            meta.get('owner'),
+            meta.get('file_version'),
+            meta['scanned_at_unix'],
+            meta.get('scanned_at_datetime')
         ))
 
     if not to_upsert:
@@ -154,20 +306,32 @@ def insert_batch(conn: sqlite3.Connection, rows: List[Tuple[str, Dict[str, Any]]
 
     cur.execute('BEGIN')
     cur.executemany('''
-        INSERT INTO files(path,name,dir,extension,size,mtime,ctime,atime,is_readonly,attributes,sha256,scanned_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO files(path,name,dir,extension,size,mtime_unix,ctime_unix,atime_unix,mtime_datetime,ctime_datetime,atime_datetime,is_readonly,is_hidden,is_system,is_archive,attributes,sha256,md5,path_length,path_depth,owner,file_version,scanned_at_unix,scanned_at_datetime)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(path) DO UPDATE SET
           name=excluded.name,
           dir=excluded.dir,
           extension=excluded.extension,
           size=excluded.size,
-          mtime=excluded.mtime,
-          ctime=excluded.ctime,
-          atime=excluded.atime,
+          mtime_unix=excluded.mtime_unix,
+          ctime_unix=excluded.ctime_unix,
+          atime_unix=excluded.atime_unix,
+          mtime_datetime=excluded.mtime_datetime,
+          ctime_datetime=excluded.ctime_datetime,
+          atime_datetime=excluded.atime_datetime,
           is_readonly=excluded.is_readonly,
+          is_hidden=excluded.is_hidden,
+          is_system=excluded.is_system,
+          is_archive=excluded.is_archive,
           attributes=excluded.attributes,
           sha256=excluded.sha256,
-          scanned_at=excluded.scanned_at;
+          md5=excluded.md5,
+          path_length=excluded.path_length,
+          path_depth=excluded.path_depth,
+          owner=excluded.owner,
+          file_version=excluded.file_version,
+          scanned_at_unix=excluded.scanned_at_unix,
+          scanned_at_datetime=excluded.scanned_at_datetime;
     ''', to_upsert)
     conn.commit()
 
@@ -179,19 +343,39 @@ def init_mssql(conn: Any) -> None:
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='files' AND xtype='U')
     BEGIN
         CREATE TABLE dbo.files (
-            path NVARCHAR(4000) PRIMARY KEY,
+            id BIGINT IDENTITY(1,1) PRIMARY KEY,
+            path NVARCHAR(4000) UNIQUE NOT NULL,
             name NVARCHAR(1024),
             dir NVARCHAR(4000),
             extension NVARCHAR(64),
             size BIGINT,
-            mtime FLOAT,
-            ctime FLOAT,
-            atime FLOAT,
+            mtime_unix FLOAT,
+            ctime_unix FLOAT,
+            atime_unix FLOAT,
+            mtime_datetime DATETIME2,
+            ctime_datetime DATETIME2,
+            atime_datetime DATETIME2,
             is_readonly BIT,
+            is_hidden BIT,
+            is_system BIT,
+            is_archive BIT,
             attributes NVARCHAR(4000),
             sha256 NVARCHAR(128),
-            scanned_at FLOAT
+            md5 NVARCHAR(64),
+            path_length INT,
+            path_depth INT,
+            owner NVARCHAR(512),
+            file_version NVARCHAR(256),
+            scanned_at_unix FLOAT,
+            scanned_at_datetime DATETIME2
         );
+        CREATE INDEX idx_dir ON dbo.files(dir);
+        CREATE INDEX idx_extension ON dbo.files(extension);
+        CREATE INDEX idx_size ON dbo.files(size);
+        CREATE INDEX idx_mtime_datetime ON dbo.files(mtime_datetime);
+        CREATE INDEX idx_path_length ON dbo.files(path_length);
+        CREATE INDEX idx_scanned_at ON dbo.files(scanned_at_datetime);
+        CREATE INDEX idx_sha256 ON dbo.files(sha256);
     END
     """)
     conn.commit()
@@ -208,12 +392,17 @@ def insert_batch_mssql(conn: Any, rows: List[Tuple[str, Dict[str, Any]]]) -> Non
     # We'll perform a transactional upsert: try UPDATE, then INSERT if no rows affected
     update_sql = ("""
     UPDATE dbo.files SET
-      name = ?, dir = ?, extension = ?, size = ?, mtime = ?, ctime = ?, atime = ?, is_readonly = ?, attributes = ?, sha256 = ?, scanned_at = ?
+      name = ?, dir = ?, extension = ?, size = ?, 
+      mtime_unix = ?, ctime_unix = ?, atime_unix = ?,
+      mtime_datetime = ?, ctime_datetime = ?, atime_datetime = ?,
+      is_readonly = ?, is_hidden = ?, is_system = ?, is_archive = ?, attributes = ?, 
+      sha256 = ?, md5 = ?, path_length = ?, path_depth = ?, owner = ?, file_version = ?, 
+      scanned_at_unix = ?, scanned_at_datetime = ?
     WHERE path = ?
     """)
     insert_sql = ("""
-    INSERT INTO dbo.files(path,name,dir,extension,size,mtime,ctime,atime,is_readonly,attributes,sha256,scanned_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO dbo.files(path,name,dir,extension,size,mtime_unix,ctime_unix,atime_unix,mtime_datetime,ctime_datetime,atime_datetime,is_readonly,is_hidden,is_system,is_archive,attributes,sha256,md5,path_length,path_depth,owner,file_version,scanned_at_unix,scanned_at_datetime)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """)
 
     try:
@@ -221,14 +410,22 @@ def insert_batch_mssql(conn: Any, rows: List[Tuple[str, Dict[str, Any]]]) -> Non
             if meta.get('error'):
                 continue
             params_update = (
-                meta['name'], meta['dir'], meta['extension'], meta['size'], meta['mtime'], meta['ctime'], meta['atime'],
-                meta['is_readonly'], meta['attributes'], meta['sha256'], meta['scanned_at'], path
+                meta['name'], meta['dir'], meta['extension'], meta['size'], 
+                meta['mtime_unix'], meta['ctime_unix'], meta['atime_unix'],
+                meta.get('mtime_datetime'), meta.get('ctime_datetime'), meta.get('atime_datetime'),
+                meta['is_readonly'], meta.get('is_hidden', 0), meta.get('is_system', 0), meta.get('is_archive', 0),
+                meta['attributes'], meta['sha256'], meta.get('md5'), meta.get('path_length', 0), meta.get('path_depth', 0),
+                meta.get('owner'), meta.get('file_version'), meta['scanned_at_unix'], meta.get('scanned_at_datetime'), path
             )
             cur.execute(update_sql, params_update)
             if cur.rowcount == 0:
                 params_insert = (
-                    path, meta['name'], meta['dir'], meta['extension'], meta['size'], meta['mtime'], meta['ctime'], meta['atime'],
-                    meta['is_readonly'], meta['attributes'], meta['sha256'], meta['scanned_at']
+                    path, meta['name'], meta['dir'], meta['extension'], meta['size'], 
+                    meta['mtime_unix'], meta['ctime_unix'], meta['atime_unix'],
+                    meta.get('mtime_datetime'), meta.get('ctime_datetime'), meta.get('atime_datetime'),
+                    meta['is_readonly'], meta.get('is_hidden', 0), meta.get('is_system', 0), meta.get('is_archive', 0),
+                    meta['attributes'], meta['sha256'], meta.get('md5'), meta.get('path_length', 0), meta.get('path_depth', 0),
+                    meta.get('owner'), meta.get('file_version'), meta['scanned_at_unix'], meta.get('scanned_at_datetime')
                 )
                 cur.execute(insert_sql, params_insert)
         conn.commit()
