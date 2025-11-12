@@ -97,6 +97,41 @@ function New-DummyFileFallback {
     finally { $stream.Close() }
 }
 
+function Set-RandomFileTimestamps {
+    param(
+        [string]$FilePath,
+        [int]$MinDaysAgo = 730,  # Default: up to 2 years ago
+        [int]$MaxDaysAgo = 1
+    )
+    
+    if (-not (Test-Path $FilePath)) { return }
+    
+    $rand = New-Object System.Random
+    $now = Get-Date
+    
+    # Random creation time (older)
+    $createdDaysAgo = $rand.Next($MaxDaysAgo, $MinDaysAgo + 1)
+    $createdTime = $now.AddDays(-$createdDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    
+    # Random modified time (between creation and now)
+    $modifiedDaysAgo = $rand.Next($MaxDaysAgo, $createdDaysAgo + 1)
+    $modifiedTime = $now.AddDays(-$modifiedDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    
+    # Random access time (between modified and now)
+    $accessedDaysAgo = $rand.Next($MaxDaysAgo, $modifiedDaysAgo + 1)
+    $accessedTime = $now.AddDays(-$accessedDaysAgo).AddHours(-$rand.Next(0,24)).AddMinutes(-$rand.Next(0,60))
+    
+    try {
+        $file = Get-Item $FilePath
+        $file.CreationTime = $createdTime
+        $file.LastWriteTime = $modifiedTime
+        $file.LastAccessTime = $accessedTime
+    }
+    catch {
+        Write-Verbose "Could not set timestamps for $FilePath : $_"
+    }
+}
+
 function New-DocxFile {
     param([string]$FilePath, [string]$BodyText, [int64]$SizeBytes = 8192)
     # Create a minimal set of files for a docx package
@@ -277,15 +312,34 @@ $subTemplates = $dirCfg.subLevel.templates
 $absRoot = (Resolve-Path -LiteralPath $RootPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue)
 if (-not $absRoot) { $newRoot = New-Item -ItemType Directory -Path $RootPath -Force; $absRoot = $newRoot.FullName }
 $dirList = New-Object System.Collections.Generic.List[System.String]
+
+# Get sublevel config parameters
+$subMinCount = if ($dirCfg.subLevel.minCount) { $dirCfg.subLevel.minCount } else { $SubLevelCount }
+$subMaxCount = if ($dirCfg.subLevel.maxCount) { $dirCfg.subLevel.maxCount } else { $SubLevelCount }
+$useParentPrefix = if ($dirCfg.subLevel.useParentPrefix) { $dirCfg.subLevel.useParentPrefix } else { $false }
+$parentPrefixProb = if ($dirCfg.subLevel.parentPrefixProbability) { [int]($dirCfg.subLevel.parentPrefixProbability * 100) } else { 0 }
+
 for ($i=0; $i -lt $TopLevelCount; $i++) {
-    $t = if ($i -lt $topTemplates.Count) { $topTemplates[$i] } else { "$($topTemplates[(Get-Random -Maximum $topTemplates.Count)])-$((Get-Random -Minimum 1 -Maximum 999))" }
+    $t = if ($i -lt $topTemplates.Count) { $topTemplates[$i] } else { $topTemplates[(Get-Random -Maximum $topTemplates.Count)] }
     $topName = "$t"
     $topPath = Join-Path $absRoot $topName
     if (-not $DryRun) { New-Item -Path $topPath -ItemType Directory -Force | Out-Null }
     $createdDirs++
-    for ($j=0; $j -lt $SubLevelCount; $j++) {
-        $s = if ($j -lt $subTemplates.Count) { $subTemplates[$j] } else { "$($subTemplates[(Get-Random -Maximum $subTemplates.Count)])-$((Get-Random -Minimum 1 -Maximum 999))" }
-    $subPath = Join-Path $topPath $s
+    
+    # Random number of sublevels for this department
+    $numSubLevels = Get-Random -Minimum $subMinCount -Maximum ($subMaxCount + 1)
+    
+    for ($j=0; $j -lt $numSubLevels; $j++) {
+        $s = $subTemplates[(Get-Random -Maximum $subTemplates.Count)]
+        
+        # Decide whether to use parent prefix (e.g., "Sales-Team-Alpha")
+        if ($useParentPrefix -and (Get-Random -Minimum 0 -Maximum 100) -lt $parentPrefixProb) {
+            $subName = "$topName-$s"
+        } else {
+            $subName = $s
+        }
+        
+        $subPath = Join-Path $topPath $subName
         if (-not $DryRun) { New-Item -Path $subPath -ItemType Directory -Force | Out-Null }
         $createdDirs++
         $dirList.Add($subPath)
@@ -324,8 +378,19 @@ foreach ($dir in $dirList) {
             if ($tmpl) {
                 $vars = @{}
                 if ($namesCfg.placeholders) {
-                    foreach ($k in $namesCfg.placeholders.Keys) { 
-                        $val = Random-FromList $namesCfg.placeholders.$k
+                    # Convert PSCustomObject to hashtable for easier access
+                    $placeholderHash = @{}
+                    foreach ($prop in $namesCfg.placeholders.PSObject.Properties) {
+                        $placeholderHash[$prop.Name] = $prop.Value
+                    }
+                    
+                    foreach ($k in $placeholderHash.Keys) { 
+                        $list = $placeholderHash[$k]
+                        if ($list -is [array]) {
+                            $val = Random-FromList $list
+                        } else {
+                            $val = $list
+                        }
                         if ($val) { $vars[$k] = $val }
                     }
                 }
@@ -404,6 +469,9 @@ foreach ($dir in $dirList) {
                     New-DummyFileFallback -FilePath $fullPath -SizeBytes $sizeBytes -SensitiveContent $injectedString
                 }
             }
+
+            # Set random file timestamps for realism
+            Set-RandomFileTimestamps -FilePath $fullPath -MinDaysAgo 730 -MaxDaysAgo 1
 
             $createdFiles++
         }

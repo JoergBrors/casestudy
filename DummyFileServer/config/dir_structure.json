@@ -11,17 +11,46 @@
       "Marketing",
       "R&D",
       "Admin",
-      "Support"
+      "Support",
+      "CustomerService",
+      "Procurement",
+      "Quality",
+      "Logistics",
+      "Production",
+      "Engineering",
+      "Compliance",
+      "Strategy",
+      "Communications",
+      "Treasury"
     ]
   },
   "subLevel": {
     "count": 5,
+    "minCount": 1,
+    "maxCount": 5,
     "templates": [
-      "Contracts",
-      "Reports",
-      "Drafts",
-      "Exports",
-      "Archive"
-    ]
+      "Team-North",
+      "Team-South",
+      "Team-East",
+      "Team-West",
+      "Team-Central",
+      "Team-Alpha",
+      "Team-Beta",
+      "Team-Gamma",
+      "Team-Delta",
+      "Operations",
+      "Planning",
+      "Analysis",
+      "Reporting",
+      "Projects",
+      "Research",
+      "Development",
+      "Support",
+      "Integration",
+      "Innovation",
+      "Excellence"
+    ],
+    "useParentPrefix": true,
+    "parentPrefixProbability": 0.1
   }
 }

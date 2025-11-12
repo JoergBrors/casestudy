@@ -80,6 +80,24 @@ if (-not (Test-Path $RootPath)) {
 $dirConfigPath = Join-Path $configPath "dir_structure.json"
 $dirConfig = Get-Content $dirConfigPath -Raw | ConvertFrom-Json
 
+# Get all available department templates
+$allDepartments = @()
+if ($dirConfig.topLevel.templates) {
+    $allDepartments = $dirConfig.topLevel.templates
+}
+
+# Ensure we have enough departments - if not, use all available and warn
+if ($allDepartments.Count -lt $TotalTopLevelDirs) {
+    Write-Warning "Requested $TotalTopLevelDirs departments but only $($allDepartments.Count) available in config. Using all available departments."
+    $TotalTopLevelDirs = $allDepartments.Count
+}
+
+# Take only the number we need
+$departmentsToUse = $allDepartments | Select-Object -First $TotalTopLevelDirs
+
+Write-Host "Available departments: $($departmentsToUse -join ', ')" -ForegroundColor Yellow
+Write-Host ""
+
 # Calculate how many top-level dirs per job
 $dirsPerJob = [Math]::Ceiling($TotalTopLevelDirs / [double]$MaxParallelJobs)
 
@@ -90,7 +108,7 @@ Write-Host ""
 $jobs = @()
 $jobInfo = @()
 
-# Create jobs
+# Create jobs - each gets a unique subset of departments
 $jobIndex = 0
 for ($i = 0; $i -lt $TotalTopLevelDirs; $i += $dirsPerJob) {
     $jobIndex++
@@ -98,16 +116,33 @@ for ($i = 0; $i -lt $TotalTopLevelDirs; $i += $dirsPerJob) {
     $endIdx = [Math]::Min($i + $dirsPerJob, $TotalTopLevelDirs)
     $jobDirCount = $endIdx - $startIdx
     
+    # Get unique department names for this job
+    $jobDepartments = $departmentsToUse[$startIdx..($endIdx-1)]
+    
     # Create a unique subdirectory for this job to work in
     $jobName = "Job$jobIndex"
     $jobPath = Join-Path $RootPath $jobName
     
+    # Create a temporary config directory for this job with custom department list
+    $jobConfigDir = Join-Path $env:TEMP "DummyFileServer-Job$jobIndex-$(Get-Random)"
+    New-Item -ItemType Directory -Path $jobConfigDir -Force | Out-Null
+    
+    # Copy configs and modify dir_structure.json for this job
+    Copy-Item (Join-Path $configPath "file_types.json") $jobConfigDir -Force
+    Copy-Item (Join-Path $configPath "file_names.json") $jobConfigDir -Force
+    Copy-Item (Join-Path $configPath "sensitive_labels.json") $jobConfigDir -Force
+    
+    # Create custom dir_structure.json with only this job's departments
+    $customDirConfig = $dirConfig.PSObject.Copy()
+    $customDirConfig.topLevel.templates = $jobDepartments
+    $customDirConfig | ConvertTo-Json -Depth 10 | Out-File (Join-Path $jobConfigDir "dir_structure.json") -Encoding utf8
+    
     $jobParams = @{
         RootPath = $jobPath
-        DirectoryConfig = (Join-Path $configPath "dir_structure.json")
-        FileTypesConfig = (Join-Path $configPath "file_types.json")
-        FileNamesConfig = (Join-Path $configPath "file_names.json")
-        SensitiveLabelsConfig = (Join-Path $configPath "sensitive_labels.json")
+        DirectoryConfig = (Join-Path $jobConfigDir "dir_structure.json")
+        FileTypesConfig = (Join-Path $jobConfigDir "file_types.json")
+        FileNamesConfig = (Join-Path $jobConfigDir "file_names.json")
+        SensitiveLabelsConfig = (Join-Path $jobConfigDir "sensitive_labels.json")
         TopLevelCount = $jobDirCount
         SubLevelCount = $SubLevelCount
         TotalOfficeFiles = $FilesPerJob
@@ -115,15 +150,23 @@ for ($i = 0; $i -lt $TotalTopLevelDirs; $i += $dirsPerJob) {
         Seed = if ($Seed -ne 0) { $Seed + $jobIndex } else { 0 }
     }
     
-    Write-Host "Starting $jobName (TopLevelDirs: $jobDirCount, Files: $FilesPerJob)..." -ForegroundColor Cyan
+    Write-Host "Starting $jobName (Departments: $($jobDepartments -join ', '), Files: $FilesPerJob)..." -ForegroundColor Cyan
     
     $job = Start-Job -Name $jobName -ScriptBlock {
-        param($ScriptPath, $Params)
+        param($ScriptPath, $Params, $TempConfigDir)
         
-        # Execute the script directly with splatting to avoid XML parsing issues
-        & $ScriptPath @Params | Out-String
+        try {
+            # Execute the script directly with splatting to avoid XML parsing issues
+            & $ScriptPath @Params | Out-String
+        }
+        finally {
+            # Clean up temp config directory
+            if (Test-Path $TempConfigDir) {
+                Remove-Item $TempConfigDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
         
-    } -ArgumentList $generatorScript, $jobParams
+    } -ArgumentList $generatorScript, $jobParams, $jobConfigDir
     
     $jobs += $job
     $jobInfo += @{
@@ -133,6 +176,8 @@ for ($i = 0; $i -lt $TotalTopLevelDirs; $i += $dirsPerJob) {
         DirCount = $jobDirCount
         FileCount = $FilesPerJob
         StartTime = Get-Date
+        Departments = $jobDepartments
+        ConfigDir = $jobConfigDir
     }
 }
 
@@ -166,7 +211,8 @@ while ($completed -lt $jobs.Count) {
                 default { 'Gray' }
             }
             
-            Write-Host "  $($info.Name): $status (Elapsed: $elapsed)" -ForegroundColor $statusColor
+            $deptList = if ($info.Departments.Count -le 3) { $info.Departments -join ', ' } else { "$($info.Departments[0]), $($info.Departments[1]), ... ($($info.Departments.Count) total)" }
+            Write-Host "  $($info.Name): $status | Departments: $deptList | Elapsed: $elapsed" -ForegroundColor $statusColor
         }
         
         Write-Host ""
@@ -186,6 +232,7 @@ foreach ($info in $jobInfo) {
     $elapsed = ((Get-Date) - $info.StartTime).ToString("mm\:ss")
     
     Write-Host "Job: $($info.Name) - $($job.State) (Duration: $elapsed)" -ForegroundColor Cyan
+    Write-Host "  Departments: $($info.Departments -join ', ')" -ForegroundColor Gray
     
     if ($job.State -eq 'Completed') {
         $output = Receive-Job -Job $job
@@ -205,6 +252,11 @@ foreach ($info in $jobInfo) {
         $jobError = Receive-Job -Job $job 2>&1
         Write-Host "  Error:" -ForegroundColor Red
         $jobError | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    }
+    
+    # Clean up temp config dir if it still exists
+    if (Test-Path $info.ConfigDir) {
+        Remove-Item $info.ConfigDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     
     Remove-Job -Job $job -Force
