@@ -21,6 +21,14 @@ import time
 import hashlib
 from multiprocessing import Pool, cpu_count
 from typing import Iterable, Tuple, Optional, Dict, Any, List
+
+# Optional import for SQL Server support
+try:
+    import pyodbc  # type: ignore
+    _HAS_PYODBC = True
+except Exception:
+    pyodbc = None  # type: ignore
+    _HAS_PYODBC = False
 import fnmatch
 
 
@@ -164,6 +172,71 @@ def insert_batch(conn: sqlite3.Connection, rows: List[Tuple[str, Dict[str, Any]]
     conn.commit()
 
 
+def init_mssql(conn: Any) -> None:
+    cur = conn.cursor()
+    # Create table if not exists (T-SQL pattern)
+    cur.execute("""
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='files' AND xtype='U')
+    BEGIN
+        CREATE TABLE dbo.files (
+            path NVARCHAR(4000) PRIMARY KEY,
+            name NVARCHAR(1024),
+            dir NVARCHAR(4000),
+            extension NVARCHAR(64),
+            size BIGINT,
+            mtime FLOAT,
+            ctime FLOAT,
+            atime FLOAT,
+            is_readonly BIT,
+            attributes NVARCHAR(4000),
+            sha256 NVARCHAR(128),
+            scanned_at FLOAT
+        );
+    END
+    """)
+    conn.commit()
+
+
+def insert_batch_mssql(conn: Any, rows: List[Tuple[str, Dict[str, Any]]]) -> None:
+    cur = conn.cursor()
+    # Try to enable fast_executemany if available (improves executemany perf)
+    try:
+        cur.fast_executemany = True  # type: ignore
+    except Exception:
+        pass
+
+    # We'll perform a transactional upsert: try UPDATE, then INSERT if no rows affected
+    update_sql = ("""
+    UPDATE dbo.files SET
+      name = ?, dir = ?, extension = ?, size = ?, mtime = ?, ctime = ?, atime = ?, is_readonly = ?, attributes = ?, sha256 = ?, scanned_at = ?
+    WHERE path = ?
+    """)
+    insert_sql = ("""
+    INSERT INTO dbo.files(path,name,dir,extension,size,mtime,ctime,atime,is_readonly,attributes,sha256,scanned_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    """)
+
+    try:
+        for path, meta in rows:
+            if meta.get('error'):
+                continue
+            params_update = (
+                meta['name'], meta['dir'], meta['extension'], meta['size'], meta['mtime'], meta['ctime'], meta['atime'],
+                meta['is_readonly'], meta['attributes'], meta['sha256'], meta['scanned_at'], path
+            )
+            cur.execute(update_sql, params_update)
+            if cur.rowcount == 0:
+                params_insert = (
+                    path, meta['name'], meta['dir'], meta['extension'], meta['size'], meta['mtime'], meta['ctime'], meta['atime'],
+                    meta['is_readonly'], meta['attributes'], meta['sha256'], meta['scanned_at']
+                )
+                cur.execute(insert_sql, params_insert)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description='File metadata scanner -> SQLite')
     parser.add_argument('--roots', '-r', required=True, nargs='+', help='Root directories to scan')
@@ -174,13 +247,56 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument('--follow-symlinks', action='store_true', help='Follow symlinks when walking')
     parser.add_argument('--include', help='Include file pattern (fnmatch)')
     parser.add_argument('--exclude', help='Exclude file pattern (fnmatch)')
+    # MSSQL / SQL Server target (optional)
+    parser.add_argument('--mssql-server', help='SQL Server host or instance (e.g. localhost\\SQLEXPRESS)')
+    parser.add_argument('--mssql-database', help='Target database name')
+    parser.add_argument('--mssql-user', help='SQL user (omit for integrated auth)')
+    parser.add_argument('--mssql-password', help='SQL password')
+    parser.add_argument('--mssql-driver', default='ODBC Driver 17 for SQL Server', help='ODBC driver name')
     args = parser.parse_args(argv)
 
     roots = [os.path.abspath(r) for r in args.roots]
     dbpath = args.db
 
-    conn = sqlite3.connect(dbpath, timeout=30)
-    init_db(conn)
+    use_mssql = bool(args.mssql_server and args.mssql_database)
+    mssql_conn = None
+    conn = None
+    insert_func = None
+
+    if use_mssql:
+        if not _HAS_PYODBC:
+            print('pyodbc is not installed or could not be imported. Install pyodbc to use MSSQL target.')
+            return 2
+        # Build connection string
+        driver = args.mssql_driver
+        server = args.mssql_server
+        database = args.mssql_database
+        # Build a connection string with encryption enabled. For ODBC Driver 18 the default is to require encryption.
+        # We explicitly set Encrypt and TrustServerCertificate to help connect to local developer instances.
+        if args.mssql_user:
+            conn_str = (
+                f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};UID={args.mssql_user};PWD={args.mssql_password};"
+                f"Encrypt=YES;TrustServerCertificate=YES"
+            )
+        else:
+            conn_str = (
+                f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};Trusted_Connection=Yes;"
+                f"Encrypt=YES;TrustServerCertificate=YES"
+            )
+        try:
+            mssql_conn = pyodbc.connect(conn_str, autocommit=False)
+        except pyodbc.InterfaceError as e:
+            # Provide a clearer error message for common driver/DSN issues
+            raise pyodbc.InterfaceError(
+                f"ODBC driver or data source not found. Check that the driver '{driver}' is installed and the server name is correct. Original error: {e}"
+            )
+        init_mssql(mssql_conn)
+        insert_func = lambda c, rows: insert_batch_mssql(mssql_conn, rows)
+        conn = mssql_conn
+    else:
+        conn = sqlite3.connect(dbpath, timeout=30)
+        init_db(conn)
+        insert_func = lambda c, rows: insert_batch(conn, rows)
 
     # Build generator of file paths
     files_iter = iter_files(roots, follow_symlinks=args.follow_symlinks, include=args.include, exclude=args.exclude)
@@ -199,11 +315,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             for res in result_iter:
                 batch.append(res)
                 if len(batch) >= args.batch_size:
-                    insert_batch(conn, batch)
+                    insert_func(conn, batch)
                     print(f"Inserted batch of {len(batch)} rows")
                     batch = []
             if batch:
-                insert_batch(conn, batch)
+                insert_func(conn, batch)
                 print(f"Inserted final batch of {len(batch)} rows")
         finally:
             pool.close()
@@ -215,14 +331,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             path, meta = process_path((p, False))
             batch.append((path, meta))
             if len(batch) >= args.batch_size:
-                insert_batch(conn, batch)
+                insert_func(conn, batch)
                 print(f"Inserted batch of {len(batch)} rows")
                 batch = []
         if batch:
-            insert_batch(conn, batch)
+            insert_func(conn, batch)
             print(f"Inserted final batch of {len(batch)} rows")
 
-    conn.close()
+    if mssql_conn:
+        mssql_conn.close()
+    else:
+        conn.close()
     return 0
 
 

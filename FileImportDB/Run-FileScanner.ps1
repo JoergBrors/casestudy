@@ -1,12 +1,18 @@
 param(
     [Parameter(Mandatory=$true)][string[]] $Roots,
     [string] $DbPath = "fileindex.db",
-    [int] $Workers = 0,
+    [int] $Workers = 10,
     [switch] $Hash,
     [int] $BatchSize = 500,
     [switch] $FollowSymlinks,
     [string] $Include,
     [string] $Exclude
+    ,
+    [string] $MssqlServer,
+    [string] $MssqlDatabase,
+    [string] $MssqlUser,
+    [string] $MssqlPassword,
+    [string] $MssqlDriver = 'ODBC Driver 17 for SQL Server'
 )
 
 Set-StrictMode -Version Latest
@@ -31,6 +37,11 @@ if ($BatchSize -ne 500) { $pyArgs.Add('--batch-size'); $pyArgs.Add([string]$Batc
 if ($FollowSymlinks) { $pyArgs.Add('--follow-symlinks') }
 if ($Include) { $pyArgs.Add('--include'); $pyArgs.Add($Include) }
 if ($Exclude) { $pyArgs.Add('--exclude'); $pyArgs.Add($Exclude) }
+if ($MssqlServer) { $pyArgs.Add('--mssql-server'); $pyArgs.Add($MssqlServer) }
+if ($MssqlDatabase) { $pyArgs.Add('--mssql-database'); $pyArgs.Add($MssqlDatabase) }
+if ($MssqlUser) { $pyArgs.Add('--mssql-user'); $pyArgs.Add($MssqlUser) }
+if ($MssqlPassword) { $pyArgs.Add('--mssql-password'); $pyArgs.Add($MssqlPassword) }
+if ($MssqlDriver) { $pyArgs.Add('--mssql-driver'); $pyArgs.Add($MssqlDriver) }
 
 $scanner = Join-Path $scriptDir 'scanner.py'
 if (-not (Test-Path $scanner)) { Write-Error "scanner.py not found in $scriptDir"; exit 1 }
