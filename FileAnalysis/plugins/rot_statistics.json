@@ -1,5 +1,8 @@
 {
   "name": "ROT_Statistics",
-  "query": "SELECT * FROM vw_rot_statistics;",
-  "output": "rot_statistics.csv"
+  "table": "[FileImportDB].[dbo].[files]",
+  "query": "SELECT extension, COUNT(*) as total_files, SUM(size) as total_size, AVG(size) as avg_size, MIN(mtime_datetime) as oldest_file, MAX(mtime_datetime) as newest_file FROM dbo.files GROUP BY extension ORDER BY total_size DESC;",
+  "output": "rot_statistics.csv",
+  "delimiter": ";",
+  "encoding": "UTF8"
 }

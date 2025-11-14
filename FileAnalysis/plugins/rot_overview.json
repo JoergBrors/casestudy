@@ -1,5 +1,8 @@
 {
   "name": "ROT_Overview",
-  "query": "SELECT * FROM vw_rot_overview;",
-  "output": "rot_overview.csv"
+  "table": "[FileImportDB].[dbo].[files]",
+  "query": "SELECT TOP 1000 name, dir, extension, size, mtime_datetime, ctime_datetime, atime_datetime, path_length, path_depth, owner FROM dbo.files ORDER BY size DESC;",
+  "output": "rot_overview.csv",
+  "delimiter": ";",
+  "encoding": "UTF8"
 }

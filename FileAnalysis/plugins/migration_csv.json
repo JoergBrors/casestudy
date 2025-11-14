@@ -1,0 +1,9 @@
+{
+  "name": "Migration_Manager_Export",
+  "table": "[FileImportDB].[dbo].[files]",
+  "query": "SELECT DISTINCT REPLACE(f.dir, 'C:\\share', '\\\\joergs-laptop\\share') AS FileSharePath, '' AS Column2, '' AS Column3, 'https://xjmg7.sharepoint.com/sites/' + CASE WHEN CHARINDEX('\\', f.dir, CHARINDEX('\\share\\', f.dir) + 7) > 0 THEN SUBSTRING(f.dir, CHARINDEX('\\share\\', f.dir) + 7, CHARINDEX('\\', f.dir, CHARINDEX('\\share\\', f.dir) + 7) - (CHARINDEX('\\share\\', f.dir) + 7)) ELSE SUBSTRING(f.dir, CHARINDEX('\\share\\', f.dir) + 7, LEN(f.dir)) END AS SharePointSite, 'Documents' AS DocLibrary, REPLACE(SUBSTRING(f.dir, CHARINDEX('\\share\\', f.dir) + 7, LEN(f.dir)), '\\', '/') AS DocSubFolder FROM dbo.files f WHERE f.dir LIKE '%\\share\\%' AND f.path_length <= 350 AND f.size <= (250 * 1024 * 1024) AND f.extension NOT IN ('.zip', '.gz', '.tar.gz', '.7z', '.dbf', '.idx') ORDER BY SharePointSite, FileSharePath;",
+  "output": "migration_manager_ready.csv",
+  "delimiter": ",",
+  "encoding": "UTF8",
+  "useQuotes": false
+}

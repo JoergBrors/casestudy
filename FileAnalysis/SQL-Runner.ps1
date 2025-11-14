@@ -8,9 +8,9 @@
 
 param(
     [string]$SqlServer = "localhost",
-    [string]$Database = "FileAnalysis",
+    [string]$Database = "FileImportDB",
     [string]$PluginPath = ".\plugins",
-    [string]$OutputPath = ".\output",
+    [string]$OutputPath = "$PSScriptRoot\output",
 
     # Optional: SQL Auth
     [switch]$UseSqlAuth,
@@ -30,22 +30,25 @@ if (!(Test-Path $PluginPath)) {
 
 if (!(Test-Path $OutputPath)) {
     Write-Host "Output-Verzeichnis wird erstellt: $OutputPath" -ForegroundColor Yellow
-    New-Item -ItemType Directory -Path $OutputPath | Out-Null
+    New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
 }
 
 # -----------------------------
 # 2. SQL-Verbindung aufbauen
 # -----------------------------
 if ($UseSqlAuth) {
-    $connectionString = "Server=$SqlServer;Database=$Database;User ID=$SqlUser;Password=$SqlPassword;TrustServerCertificate=True;"
+    $connectionString = "Server=$SqlServer;Database=$Database;User ID=$SqlUser;Password=$SqlPassword;Encrypt=Yes;TrustServerCertificate=Yes;Timeout=30;"
 }
 else {
-    $connectionString = "Server=$SqlServer;Database=$Database;Integrated Security=True;TrustServerCertificate=True;"
+    $connectionString = "Server=$SqlServer;Database=$Database;Integrated Security=True;Encrypt=Yes;TrustServerCertificate=Yes;Timeout=30;"
 }
+
+Write-Host "Verbindungsstring: Server=$SqlServer, Database=$Database" -ForegroundColor Gray
 
 $connection = New-Object System.Data.SqlClient.SqlConnection $connectionString
 
 try {
+    Write-Host "Verbinde mit SQL Server..." -ForegroundColor Gray
     $connection.Open()
     Write-Host "Verbunden mit SQL Server: $SqlServer / $Database" -ForegroundColor Green
 }
@@ -90,9 +93,20 @@ foreach ($jsonFile in $jsonFiles) {
     $queryName  = $plugin.name
     $querySql   = $plugin.query
     $outputFile = Join-Path $OutputPath $plugin.output
+    
+    # CSV-Einstellungen aus JSON (Defaults: Semikolon + UTF8)
+    $delimiter = if ($plugin.delimiter) { $plugin.delimiter } else { ";" }
+    $encoding = if ($plugin.encoding) { $plugin.encoding } else { "UTF8" }
+    $useQuotes = if ($null -ne $plugin.useQuotes) { $plugin.useQuotes } else { $true }
+
+    # Stelle sicher, dass Output-Verzeichnis existiert (falls relativer Pfad in output)
+    $outputDir = Split-Path $outputFile -Parent
+    if (!(Test-Path $outputDir)) {
+        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+    }
 
     Write-Host "Query: $queryName"
-    Write-Host "Output: $outputFile"
+    Write-Host "Output: $outputFile (Delimiter: '$delimiter', Encoding: $encoding)"
 
     # SQL Kommando vorbereiten
     $command = $connection.CreateCommand()
@@ -122,12 +136,47 @@ foreach ($jsonFile in $jsonFiles) {
     }
 
     # -----------------------------
-    # 7. CSV exportieren (UTF8, ; - delimiter)
+    # 7. CSV exportieren (mit konfigurierbarem Delimiter + Encoding)
     # -----------------------------
     try {
-        $csvContent = $table | ConvertTo-Csv -NoTypeInformation -Delimiter ';'
-        [System.IO.File]::WriteAllLines($outputFile, $csvContent, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "Exportiert: $outputFile" -ForegroundColor Green
+        if ($useQuotes) {
+            # Standard CSV mit Quotes
+            $csvContent = $table | ConvertTo-Csv -NoTypeInformation -Delimiter $delimiter
+        }
+        else {
+            # Migration Manager Format: Keine Quotes, nur Kommas
+            # Erstelle Header mit leeren Spaltennamen für Column2 und Column3
+            $headerParts = @()
+            foreach ($col in $table.Columns) {
+                if ($col.ColumnName -eq 'Column2' -or $col.ColumnName -eq 'Column3') {
+                    $headerParts += ''
+                }
+                else {
+                    $headerParts += $col.ColumnName
+                }
+            }
+            $header = $headerParts -join $delimiter
+            $csvLines = @($header)
+            foreach ($row in $table.Rows) {
+                $line = ($row.ItemArray | ForEach-Object { 
+                    if ($null -eq $_ -or $_ -eq [DBNull]::Value) { "" } else { $_.ToString() }
+                }) -join $delimiter
+                $csvLines += $line
+            }
+            $csvContent = $csvLines
+        }
+        
+        # Encoding-Objekt erstellen basierend auf Konfiguration
+        $encodingObj = switch ($encoding.ToUpper()) {
+            "UTF8"    { [System.Text.UTF8Encoding]::new($false) }
+            "UTF8BOM" { [System.Text.UTF8Encoding]::new($true) }
+            "ASCII"   { [System.Text.ASCIIEncoding]::new() }
+            "UNICODE" { [System.Text.UnicodeEncoding]::new() }
+            default   { [System.Text.UTF8Encoding]::new($false) }
+        }
+        
+        [System.IO.File]::WriteAllLines($outputFile, $csvContent, $encodingObj)
+        Write-Host "Exportiert: $outputFile ($($table.Rows.Count) Zeilen)" -ForegroundColor Green
     }
     catch {
         Write-Host "FEHLER beim Schreiben der CSV-Datei!" -ForegroundColor Red

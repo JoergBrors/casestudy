@@ -1,0 +1,9 @@
+FileSharePath Column2 Column3 SharePointSite DocLibrary DocSubFolder
+------------- ------- ------- -------------- ---------- ------------
+C:\share\Job1\01-CEO-Gesamtleitung-und-Strategie\People-und-Culture-Learning-und-Development   https://xjmg7.sharepoint.com/sites/Job1 Documents Job1/01-CEO-Gesamtleitung-und-Strategie/People-und-Culture-Learning-und-Development
+C:\share\Job1\01-CEO-Gesamtleitung-und-Strategie\Technologie-Softwareentwicklung   https://xjmg7.sharepoint.com/sites/Job1 Documents Job1/01-CEO-Gesamtleitung-und-Strategie/Technologie-Softwareentwicklung
+C:\share\Job1\02-CFO-Finanzen-und-Controlling\02-CFO-Finanzen-und-Controlling-Technologie-Cloud-und-Infrastruktur   https://xjmg7.sharepoint.com/sites/Job1 Documents Job1/02-CFO-Finanzen-und-Controlling/02-CFO-Finanzen-und-Controlling-Technologie-Cloud-und-Infrastruktur
+C:\share\Job1\02-CFO-Finanzen-und-Controlling\Facility-und-Workplace-Management   https://xjmg7.sharepoint.com/sites/Job1 Documents Job1/02-CFO-Finanzen-und-Controlling/Facility-und-Workplace-Management
+C:\share\Job1\02-CFO-Finanzen-und-Controlling\Finanzen-Finanzmanagement-Controlling   https://xjmg7.sharepoint.com/sites/Job1 Documents Job1/02-CFO-Finanzen-und-Controlling/Finanzen-Finanzmanagement-Controlling
+
+(5 Zeilen betroffen)

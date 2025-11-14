@@ -1,5 +1,8 @@
 {
   "name": "Migration_Risks",
-  "query": "SELECT * FROM vw_migration_risks;",
-  "output": "migration_risks.csv"
+  "table": "[FileImportDB].[dbo].[files]",
+  "query": "SELECT dir, extension, COUNT(*) as file_count, SUM(size) as total_size_bytes, AVG(DATEDIFF(day, mtime_datetime, GETDATE())) as avg_age_days FROM dbo.files GROUP BY dir, extension HAVING COUNT(*) > 5 ORDER BY total_size_bytes DESC;",
+  "output": "migration_risks.csv",
+  "delimiter": ";",
+  "encoding": "UTF8"
 }
