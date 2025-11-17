@@ -28,6 +28,11 @@ import os
 import math
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta, timezone
+import asyncio
+import sys
+import signal
+import traceback
+import getpass
 # Optional Azure Key Vault support
 try:
     from azure.identity import DefaultAzureCredential  # type: ignore
@@ -39,11 +44,252 @@ except Exception:
 try:
     from tqdm import tqdm
 except Exception:
-    # Simple fallback progress if tqdm not installed
-    def tqdm(iterable=None, **kwargs):
-        return iterable
+    # Simple fallback progress if tqdm not installed. Provide a small
+    # dummy progress-bar object with the methods used in this script so
+    # code can call `.update()`, `.close()`, `.set_description()` etc.
+    class _DummyPbar:
+        def __init__(self, total=0, desc=None, **kwargs):
+            self.total = total or 0
+            self.desc = desc
+        def update(self, n=1):
+            pass
+        def set_description(self, desc):
+            self.desc = desc
+        def refresh(self):
+            pass
+        def close(self):
+            pass
+
+    def tqdm(*args, **kwargs):
+        # Support both `tqdm(iterable)` and `tqdm(total=..., desc=...)` calls.
+        # If an iterable is provided as the first positional arg, return it
+        # (we don't iterate through it here); otherwise return a dummy pbar.
+        if args and not kwargs:
+            return args[0]
+        # When called with keyword args or a numeric total, return dummy pbar
+        total = kwargs.get('total') or (args[0] if args else 0)
+        desc = kwargs.get('desc')
+        return _DummyPbar(total=total, desc=desc)
 
 LOG = logging.getLogger("graph_drive_scanner")
+
+# Diagnostic startup log to capture PID, argv and signals when a process
+# is terminated externally (Stop-Process, taskkill, etc.). This file is
+# intentionally separate from the normal logger so it is written even
+# when the process is killed abruptly.
+DIAG_LOG_PATH = os.path.join(os.path.dirname(__file__), 'diagnostic_startup.log')
+
+
+def _append_diag(msg: str):
+    try:
+        with open(DIAG_LOG_PATH, 'a', encoding='utf-8') as df:
+            df.write(f"{datetime.utcnow().isoformat()}Z {msg}\n")
+    except Exception:
+        # best-effort; do not crash if diagnostics cannot be written
+        try:
+            LOG.debug("Failed to write diagnostic log")
+        except Exception:
+            pass
+
+
+def install_startup_diagnostics():
+    try:
+        _append_diag("--- startup diagnostics ---")
+        _append_diag(f"PID={os.getpid()} PPID={getattr(os, 'getppid', lambda: None)()} PY={sys.executable}")
+        _append_diag(f"CWD={os.getcwd()} ARGV={' '.join(sys.argv)} USER={getpass.getuser()}")
+        # note presence of selected env vars (mask values)
+        keys = ['GRAPH_TENANT_ID', 'TENANT_ID', 'GRAPH_CLIENT_ID', 'CLIENT_ID', 'GRAPH_CLIENT_SECRET', 'CLIENT_SECRET', 'SITE_ID', 'DRIVE_ID']
+        for k in keys:
+            v = os.environ.get(k)
+            if v is None:
+                _append_diag(f"ENV {k}=<missing>")
+            else:
+                _append_diag(f"ENV {k}=<present len={len(v)}>" )
+
+        def _exc_hook(exc_type, exc, tb):
+            try:
+                _append_diag("UNCAUGHT EXCEPTION:")
+                _append_diag(''.join(traceback.format_exception(exc_type, exc, tb)))
+            except Exception:
+                pass
+            # also call the default hook
+            try:
+                sys.__excepthook__(exc_type, exc, tb)
+            except Exception:
+                pass
+
+        sys.excepthook = _exc_hook
+
+        def _sig_handler(sig, frame):
+            try:
+                _append_diag(f"RECEIVED SIGNAL: {sig}")
+                # append a small stack sample
+                try:
+                    _append_diag(''.join(traceback.format_stack(frame)))
+                except Exception:
+                    pass
+            finally:
+                try:
+                    # flush standard logging handlers
+                    for h in logging.root.handlers:
+                        try:
+                            h.flush()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # best-effort immediate exit with no cleanup that might be interrupted
+                try:
+                    os._exit(1)
+                except Exception:
+                    pass
+
+        for s in ('SIGINT', 'SIGTERM'):
+            try:
+                sigobj = getattr(signal, s)
+                signal.signal(sigobj, _sig_handler)
+            except Exception:
+                # signal may not be available on all platforms
+                pass
+
+    except Exception:
+        try:
+            LOG.debug("Failed to install startup diagnostics")
+        except Exception:
+            pass
+
+
+# Install diagnostics early so we capture signals even if the run is short
+install_startup_diagnostics()
+
+# Asyncio-based live monitor queue. We create an asyncio.Queue that
+# worker coroutines put small update events into. The live display runs
+# as an async task in the main event loop (foreground) and renders a
+# concise status line when events arrive or periodically.
+LIVE_QUEUE: Optional[asyncio.Queue] = None
+
+
+def set_live_queue(q: Optional[asyncio.Queue]):
+    global LIVE_QUEUE
+    LIVE_QUEUE = q
+
+
+def monitor_set_initial(folders: int, files: int):
+    q = LIVE_QUEUE
+    if q is None:
+        return
+    try:
+        q.put_nowait({"type": "set_initial", "folders": int(folders), "files": int(files)})
+    except Exception:
+        pass
+
+
+def monitor_add_folders(n: int = 1):
+    q = LIVE_QUEUE
+    if q is None:
+        return
+    try:
+        q.put_nowait({"type": "add_folders", "n": int(n)})
+    except Exception:
+        pass
+
+
+def monitor_add_files(n: int = 1):
+    q = LIVE_QUEUE
+    if q is None:
+        return
+    try:
+        q.put_nowait({"type": "add_files", "n": int(n)})
+    except Exception:
+        pass
+
+
+def monitor_add_details(n: int = 1):
+    q = LIVE_QUEUE
+    if q is None:
+        return
+    try:
+        q.put_nowait({"type": "add_details", "n": int(n)})
+    except Exception:
+        pass
+
+
+async def live_display_loop(queue: asyncio.Queue, interval: float = 1.0):
+    """Runs in the main event loop; consumes events from `queue` and
+    updates a single-line status display. Terminates when it receives a
+    `{'type':'stop'}` event.
+    """
+    folders = 0
+    files = 0
+    details = 0
+    last_print = 0.0
+    try:
+        # Use a small tqdm bar if available; otherwise fallback to carriage-return printing
+        try:
+            pbar = tqdm(total=0, desc="Live status", position=2)
+        except Exception:
+            pbar = None
+
+        while True:
+            try:
+                ev = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                ev = None
+
+            if ev:
+                et = ev.get("type")
+                if et == "stop":
+                    break
+                if et == "set_initial":
+                    folders = int(ev.get("folders", folders))
+                    files = int(ev.get("files", files))
+                elif et == "add_folders":
+                    folders += int(ev.get("n", 1))
+                elif et == "add_files":
+                    files += int(ev.get("n", 1))
+                elif et == "add_details":
+                    details += int(ev.get("n", 1))
+            # Immediate render on event (responsive) and periodic render
+            def _render():
+                desc = f"Folders: {folders} | Files: {files} | Details: {details}"
+                try:
+                    if pbar:
+                        pbar.set_description(desc)
+                        pbar.refresh()
+                    else:
+                        # print a newline so it's visible even if carriage-return
+                        print(desc, flush=True)
+                except Exception:
+                    try:
+                        print(desc, flush=True)
+                    except Exception:
+                        LOG.debug(desc)
+
+            # If we processed an event, render immediately
+            if ev is not None:
+                _render()
+                last_print = asyncio.get_event_loop().time()
+            else:
+                # Periodic render if no events
+                now = asyncio.get_event_loop().time()
+                if now - last_print >= interval:
+                    _render()
+                    last_print = now
+
+        # final render before exit
+        final = f"Done. Folders: {folders} | Files: {files} | Details: {details}"
+        try:
+            if pbar:
+                pbar.set_description(final)
+                pbar.close()
+                print("", flush=True)
+            else:
+                print(final)
+        except Exception:
+            LOG.info(final)
+    except Exception as ex:
+        LOG.exception("Live display loop failed: %s", ex)
+
 
 
 class GraphClient:
@@ -204,17 +450,75 @@ async def collect_folders_and_files(client: GraphClient, drive_id: str, page_siz
         else:
             files.append(item)
 
-    # iterate folder queue
+    # iterate folder queue with progress bars
+    total_folders = len(folders)
+    total_files = len(files)
+    
+    try:
+        # Create progress bars with different colors and counts
+        folder_pbar = tqdm(total=total_folders, desc=f"Folders ({total_folders})", 
+                          colour="blue", position=0, leave=True)
+        file_pbar = tqdm(total=total_files, desc=f"Files ({total_files})", 
+                        colour="green", position=1, leave=True)
+    except:
+        # Fallback if tqdm doesn't support color
+        folder_pbar = tqdm(total=total_folders, desc=f"Folders ({total_folders})", position=0)
+        file_pbar = tqdm(total=total_files, desc=f"Files ({total_files})", position=1)
+    # Mark initially-discovered files as already counted on the file progress bar
+    try:
+        if total_files:
+            file_pbar.update(total_files)
+    except Exception:
+        pass
+
+    # Tell the live monitor the initial counts so the background thread can
+    # show live totals while discovery continues
+    try:
+        monitor_set_initial(total_folders, total_files)
+    except Exception:
+        pass
+    
     idx = 0
     while idx < len(folders):
         folder = folders[idx]
         children = await list_item_children(client, drive_id, folder["id"], page_size, include_file=include_file)
+        new_folders = 0
+        new_files = 0
         for c in children:
             if c.get("folder") is not None:
                 folders.append(c)
+                new_folders += 1
             else:
                 files.append(c)
+                new_files += 1
+        
+        # Update progress bars and totals
+        if new_folders > 0:
+            folder_pbar.total = len(folders)
+            folder_pbar.set_description(f"Folders ({len(folders)})")
+            folder_pbar.refresh()
+            # update monitor with new folders
+            try:
+                monitor_add_folders(new_folders)
+            except Exception:
+                pass
+        
+        if new_files > 0:
+            file_pbar.total = len(files)
+            file_pbar.set_description(f"Files ({len(files)})")
+            file_pbar.update(new_files)
+            # update monitor with new files
+            try:
+                monitor_add_files(new_files)
+            except Exception:
+                pass
+        
+        folder_pbar.update(1)
         idx += 1
+    
+    # Close progress bars
+    folder_pbar.close()
+    file_pbar.close()
 
     return folders, files
 
@@ -300,6 +604,7 @@ async def fetch_file_detail(client: GraphClient, drive_id: str, item: Dict[str, 
         return result
 
 
+
 async def gather_file_details(client: GraphClient, drive_id: str, files: List[Dict[str, Any]], site_id: Optional[str], concurrency: int, delay_ms: int, show_progress: bool, no_per_item_get: bool = False) -> List[Dict[str, Any]]:
     sem = asyncio.Semaphore(concurrency)
     tasks = []
@@ -340,6 +645,11 @@ async def gather_file_details(client: GraphClient, drive_id: str, files: List[Di
             r = await fetch_file_detail(client, drive_id, item, site_id, sem, delay_ms, no_per_item_get=no_per_item_get)
             results.append(r)
         finally:
+            # update monitor for each processed detail
+            try:
+                monitor_add_details(1)
+            except Exception:
+                pass
             completed += 1
             if pbar:
                 pbar.update(1)
@@ -367,6 +677,112 @@ async def gather_file_details(client: GraphClient, drive_id: str, files: List[Di
     return results
 
 
+async def batch_gather_file_details(client: GraphClient, drive_id: str, files: List[Dict[str, Any]], site_id: Optional[str], batch_size: int, concurrency: int, delay_ms: int, show_progress: bool) -> List[Dict[str, Any]]:
+    """Use Graph $batch endpoint to fetch per-item details in batches.
+    This sends one GET per item requesting `file` and `sensitivityLabel`.
+    Batch size should be <= 20 (Graph limit for requests per batch).
+    """
+    sem = asyncio.Semaphore(concurrency)
+    results: List[Dict[str, Any]] = []
+    total = len(files)
+    if show_progress:
+        pbar = tqdm(total=total, desc="Files(batch)")
+    else:
+        pbar = None
+
+    # chunk items into batches of batch_size
+    batches = [files[i:i+batch_size] for i in range(0, total, batch_size)]
+
+    async def _process_batch(batch_items: List[Dict[str, Any]]):
+        async with sem:
+            if delay_ms > 0:
+                await asyncio.sleep(delay_ms / 1000.0)
+            # build batch body
+            reqs = []
+            for idx, it in enumerate(batch_items):
+                # request item selecting file and sensitivityLabel
+                url = f"/drives/{drive_id}/items/{it['id']}?$select=file,sensitivityLabel"
+                reqs.append({"id": it['id'], "method": "GET", "url": url})
+
+            body = {"requests": reqs}
+            try:
+                resp = await client.request("POST", f"{client.api_base()}/$batch", json=body)
+            except Exception as ex:
+                LOG.warning(f"Batch request failed: {ex}")
+                # on failure, fallback to per-item fetch
+                for it in batch_items:
+                    try:
+                        r = await fetch_file_detail(client, drive_id, it, site_id, asyncio.Semaphore(1), delay_ms, no_per_item_get=False)
+                        results.append(r)
+                    except Exception as ex2:
+                        LOG.debug(f"Fallback per-item failed for {it.get('id')}: {ex2}")
+                    finally:
+                        if pbar:
+                            pbar.update(1)
+                        try:
+                            monitor_add_details(1)
+                        except Exception:
+                            pass
+                return
+
+            # process batch responses
+            responses = resp.get("responses", []) if isinstance(resp, dict) else []
+            # map responses by id
+            resp_map = {r.get("id"): r for r in responses}
+            for it in batch_items:
+                rid = it['id']
+                entry = {
+                    "id": it.get("id"),
+                    "name": it.get("name"),
+                    "path": build_path(it),
+                    "size": it.get("size", 0),
+                    "isFolder": False,
+                    "quickXorHash": None,
+                    "sensitivityLabelId": None,
+                    "sensitivityLabelName": None,
+                    "createdDateTime": it.get("createdDateTime"),
+                    "lastModifiedDateTime": it.get("lastModifiedDateTime"),
+                }
+                r = resp_map.get(rid)
+                if not r:
+                    LOG.debug(f"No batch response for {rid}")
+                    results.append(entry)
+                    if pbar:
+                        pbar.update(1)
+                    continue
+
+                status = r.get("status")
+                if status and 200 <= int(status) < 300:
+                    body = r.get("body") or {}
+                    ff = body.get("file") if isinstance(body, dict) else None
+                    if ff and isinstance(ff, dict):
+                        hashes = ff.get("hashes")
+                        if hashes and hashes.get("quickXorHash"):
+                            entry["quickXorHash"] = hashes.get("quickXorHash")
+                    sl = body.get("sensitivityLabel") if isinstance(body, dict) else None
+                    if sl:
+                        entry["sensitivityLabelId"] = sl.get("id")
+                        entry["sensitivityLabelName"] = sl.get("name") or sl.get("displayName") or sl.get("label")
+                else:
+                    # non-success: log and leave fields empty
+                    LOG.debug(f"Batch item {rid} returned status {status}")
+
+                results.append(entry)
+                if pbar:
+                    pbar.update(1)
+                try:
+                    monitor_add_details(1)
+                except Exception:
+                    pass
+
+    # launch batches with concurrency limit
+    tasks = [asyncio.create_task(_process_batch(b)) for b in batches]
+    await asyncio.gather(*tasks)
+    if pbar:
+        pbar.close()
+    return results
+
+
 def save_json(items: List[Dict[str, Any]], path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -375,6 +791,42 @@ def save_json(items: List[Dict[str, Any]], path: str):
 
 async def main_async(args):
     logging.basicConfig(level=logging.INFO if not args.verbose else logging.DEBUG)
+    # Optionally ignore SIGINT for a short period to work around external killers
+    if getattr(args, 'ignore_sigint_seconds', 0) and args.ignore_sigint_seconds > 0:
+        try:
+            n = int(args.ignore_sigint_seconds)
+            LOG.info(f"Temporarily ignoring SIGINT for {n}s (diagnostic)")
+            try:
+                _append_diag(f"Temporarily ignoring SIGINT for {n}s")
+            except Exception:
+                pass
+            try:
+                prev = signal.getsignal(signal.SIGINT)
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+            except Exception:
+                prev = None
+            import time as _t
+            _t.sleep(n)
+            try:
+                if prev is not None:
+                    signal.signal(signal.SIGINT, prev)
+                _append_diag("SIGINT handler restored after ignore period")
+                LOG.info("SIGINT handler restored after ignore period")
+            except Exception:
+                LOG.debug("Could not restore SIGINT handler")
+        except Exception as ex:
+            LOG.debug(f"ignore-sigint handling failed: {ex}")
+    # Diagnostic hold before starting network calls so operator can observe PID
+    if getattr(args, 'hold_start_seconds', 0) and args.hold_start_seconds > 0:
+        hold = int(args.hold_start_seconds)
+        LOG.info(f"Holding start for {hold}s to allow diagnostic observation (PID={os.getpid()})")
+        try:
+            _append_diag(f"Hold start for {hold}s requested by CLI")
+        except Exception:
+            pass
+        # synchronous sleep here on purpose so signal handlers can be observed
+        import time as _t
+        _t.sleep(hold)
     # Dry-run mode: generate mock items and export without calling Graph
     if args.dry_run:
         LOG.info("DryRun mode: loading mock items locally (no network calls)")
@@ -385,8 +837,20 @@ async def main_async(args):
         with open(mock_file, 'r', encoding='utf-8') as mf:
             mock = json.load(mf)
 
+        # Optionally start the live monitor for dry-run so we can test it
+        monitor_queue = None
+        monitor_task = None
+        if not args.no_progress and args.progress_interval and args.progress_interval > 0:
+            monitor_queue = asyncio.Queue()
+            set_live_queue(monitor_queue)
+            monitor_task = asyncio.create_task(live_display_loop(monitor_queue, interval=1.0))
+
         # build details directly from loaded mock
         details = []
+        # pre-count folders/files for monitor initial state
+        total_folders = sum(1 for it in mock if it.get('folder') is not None)
+        total_files = sum(1 for it in mock if it.get('folder') is None)
+        monitor_set_initial(total_folders, total_files)
         for it in mock:
             d = {
                 "id": it.get("id"),
@@ -413,6 +877,20 @@ async def main_async(args):
                         if not d.get('sensitivityLabelName'):
                             d['sensitivityLabelName'] = fields[k]
             details.append(d)
+            try:
+                monitor_add_details(1)
+            except Exception:
+                pass
+
+        # stop monitor if running
+        try:
+            if monitor_task and monitor_queue:
+                await monitor_queue.put({"type": "stop"})
+                await monitor_task
+        except Exception:
+            pass
+        finally:
+            set_live_queue(None)
     else:
         async with aiohttp.ClientSession() as session:
             # Resolve client secret: CLI -> env -> Key Vault
@@ -440,31 +918,68 @@ async def main_async(args):
             setattr(client, "progress_interval", args.progress_interval)
 
             LOG.info("Collecting folder structure and file list (fast scan)")
+            # Start a background live monitor showing folders/files/details if
+            # progress is enabled. Use a short interval for responsive updates.
+            monitor_queue = None
+            monitor_task = None
+            if not args.no_progress and args.progress_interval and args.progress_interval > 0:
+                monitor_queue = asyncio.Queue()
+                set_live_queue(monitor_queue)
+                monitor_task = asyncio.create_task(live_display_loop(monitor_queue, interval=1.0))
             # Request the file facet in listings to reduce per-item GETs
             folders, files = await collect_folders_and_files(client, args.drive_id, args.page_size, include_file=True)
             LOG.info(f"Collected {len(folders)} folders and {len(files)} files (initial scan)")
 
-            # Now fetch file details in parallel; if --no-per-item-get is set we will not perform per-item GETs
-            details = await gather_file_details(client, args.drive_id, files, args.site_id, args.concurrency, args.request_delay_ms, show_progress=not args.no_progress, no_per_item_get=args.no_per_item_get)
-
-        # Export
+            # Now fetch file details
+            if args.use_batch:
+                details = await batch_gather_file_details(client, args.drive_id, files, args.site_id, args.batch_size, args.concurrency, args.request_delay_ms, show_progress=not args.no_progress)
+            else:
+                # parallel per-item GETs; if --no-per-item-get is set we will not perform per-item GETs
+                details = await gather_file_details(client, args.drive_id, files, args.site_id, args.concurrency, args.request_delay_ms, show_progress=not args.no_progress, no_per_item_get=args.no_per_item_get)
+            # Stop live monitor (if any) now that details are complete
+            try:
+                if monitor_task and monitor_queue:
+                    await monitor_queue.put({"type": "stop"})
+                    await monitor_task
+            except Exception:
+                pass
+            finally:
+                set_live_queue(None)
+        # Export or show only progress
         outdir = args.output_dir or "./output"
-        os.makedirs(outdir, exist_ok=True)
-        if args.export_json:
-            json_path = os.path.join(outdir, "drive_analysis.json")
-            save_json(details, json_path)
-            LOG.info(f"JSON exported: {json_path}")
-        if args.export_csv:
-            csv_path = os.path.join(outdir, "drive_analysis.csv")
-            # write simple CSV
-            import csv
-            keys = ["id", "name", "path", "size", "quickXorHash", "sensitivityLabelId", "sensitivityLabelName", "createdDateTime", "lastModifiedDateTime"]
-            with open(csv_path, "w", encoding="utf-8", newline="") as cf:
-                w = csv.DictWriter(cf, fieldnames=keys, extrasaction="ignore")
-                w.writeheader()
-                for r in details:
-                    w.writerow(r)
-            LOG.info(f"CSV exported: {csv_path}")
+        if args.only_progress:
+            # Show a final progress bar for the number of processed items
+            total_final = len(details)
+            try:
+                final_pbar = tqdm(total=total_final, desc="Finalizing (no files)")
+            except Exception:
+                final_pbar = None
+            for _ in range(total_final):
+                if final_pbar:
+                    final_pbar.update(1)
+                else:
+                    # small sleep to make a readable log stream
+                    time.sleep(0.01)
+            if final_pbar:
+                final_pbar.close()
+            LOG.info(f"Done: processed {total_final} items (no files written)")
+        else:
+            os.makedirs(outdir, exist_ok=True)
+            if args.export_json:
+                json_path = os.path.join(outdir, "drive_analysis.json")
+                save_json(details, json_path)
+                LOG.info(f"JSON exported: {json_path}")
+            if args.export_csv:
+                csv_path = os.path.join(outdir, "drive_analysis.csv")
+                # write simple CSV
+                import csv
+                keys = ["id", "name", "path", "size", "quickXorHash", "sensitivityLabelId", "sensitivityLabelName", "createdDateTime", "lastModifiedDateTime"]
+                with open(csv_path, "w", encoding="utf-8", newline="") as cf:
+                    w = csv.DictWriter(cf, fieldnames=keys, extrasaction="ignore")
+                    w.writeheader()
+                    for r in details:
+                        w.writerow(r)
+                LOG.info(f"CSV exported: {csv_path}")
 
 
 def parse_args():
@@ -477,10 +992,14 @@ def parse_args():
     p.add_argument("--site-id", required=False)
     p.add_argument("--drive-id", required=True)
     p.add_argument("--page-size", type=int, default=200)
+    p.add_argument("--hold-start-seconds", type=int, default=0, help="Seconds to wait before starting network calls (useful for diagnostic PID observation)")
+    p.add_argument("--ignore-sigint-seconds", type=int, default=0, help="Temporarily ignore SIGINT for N seconds at startup (diagnostic)")
     p.add_argument("--concurrency", type=int, default=8, help="Number of concurrent file detail requests")
     p.add_argument("--request-delay-ms", type=int, default=0, help="Max random delay per request (ms)")
     p.add_argument("--output-dir", default="./SharepointAnalysis/output")
     p.add_argument("--progress-interval", type=int, default=10, help="Seconds between textual progress logs (0 disables)")
+    p.add_argument("--use-batch", action="store_true", help="Use Microsoft Graph $batch endpoint to fetch file details in batches")
+    p.add_argument("--batch-size", type=int, default=20, help="Number of items per batch request (max 20 requests per batch)")
     p.add_argument("--fail-on-throttle", action="store_true", help="Do not retry on 429/5xx; fail immediately (useful when another sync is causing transient errors)")
     p.add_argument("--export-json", dest="export_json", action="store_true")
     p.add_argument("--export-csv", dest="export_csv", action="store_true")
@@ -490,12 +1009,63 @@ def parse_args():
     p.add_argument("--keyvault-secret-name", required=False, help="Name of the secret in Key Vault to read the client secret from")
     p.add_argument("--no-per-item-get", action="store_true", help="Do not perform per-item GETs for file.hashes; rely on file facet from the initial listing")
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--only-progress", action="store_true", help="Do not write JSON/CSV files; only show a final progress bar and summary")
     p.add_argument("--max-retry", type=int, default=6)
     p.add_argument("--verbose", action="store_true")
     return p.parse_args()
 
 
 def main():
+    # Load .env.local and merge env-provided defaults into CLI args so callers
+    # that invoke `main()` (or other wrappers) get the same behavior as
+    # running the script directly.
+    env_path = os.path.join(os.path.dirname(__file__), '.env.local')
+    if os.path.exists(env_path):
+        try:
+            from dotenv import load_dotenv  # type: ignore
+            load_dotenv(env_path)
+        except Exception:
+            try:
+                with open(env_path, 'r', encoding='utf-8') as ef:
+                    for ln in ef:
+                        ln = ln.strip()
+                        if not ln or ln.startswith('#'):
+                            continue
+                        if '=' not in ln:
+                            continue
+                        k, v = ln.split('=', 1)
+                        k = k.strip()
+                        v = v.strip().strip('"')
+                        if k and v and k not in os.environ:
+                            os.environ[k] = v
+            except Exception:
+                pass
+
+    # Merge selected environment variables into sys.argv as defaults
+    import sys
+    cli_args = sys.argv[1:]
+    env_map = {
+        '--tenant-id': 'GRAPH_TENANT_ID',
+        '--client-id': 'GRAPH_CLIENT_ID',
+        '--client-secret': 'GRAPH_CLIENT_SECRET',
+        '--site-id': 'GRAPH_SITE_ID',
+        '--drive-id': 'GRAPH_DRIVE_ID',
+        '--output-dir': 'GRAPH_OUTPUT_DIR',
+    }
+    env_args: List[str] = []
+    for opt, env_var in env_map.items():
+        val = os.environ.get(env_var)
+        if val:
+            present = False
+            for a in cli_args:
+                if a == opt or a.startswith(opt + "="):
+                    present = True
+                    break
+            if not present:
+                env_args.extend([opt, val])
+
+    sys.argv = [sys.argv[0]] + env_args + cli_args
+
     args = parse_args()
     try:
         asyncio.run(main_async(args))
@@ -504,4 +1074,90 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Load .env.local from the script directory if present. Prefer python-dotenv when available,
+    # otherwise fall back to a simple key=value loader.
+    env_path = os.path.join(os.path.dirname(__file__), '.env.local')
+    if os.path.exists(env_path):
+        try:
+            from dotenv import load_dotenv  # type: ignore
+            load_dotenv(env_path)
+        except Exception:
+            try:
+                with open(env_path, 'r', encoding='utf-8') as ef:
+                    for ln in ef:
+                        ln = ln.strip()
+                        if not ln or ln.startswith('#'):
+                            continue
+                        if '=' not in ln:
+                            continue
+                        k, v = ln.split('=', 1)
+                        k = k.strip()
+                        v = v.strip().strip('"')
+                        if k and v and k not in os.environ:
+                            os.environ[k] = v
+            except Exception:
+                pass
+
+    # Construct default CLI args from environment variables, but allow explicit
+    # command-line arguments to override them. We only add an env-provided
+    # option if that option/key is not already present on the command line.
+    import sys
+    cli_args = sys.argv[1:]
+    # Map CLI options to one or more environment variable names. Values may be
+    # supplied either with a GRAPH_* prefix or with simpler names in `.env.local`.
+    env_map = {
+        '--tenant-id': ['GRAPH_TENANT_ID', 'TENANT_ID'],
+        '--client-id': ['GRAPH_CLIENT_ID', 'CLIENT_ID'],
+        '--client-secret': ['GRAPH_CLIENT_SECRET', 'CLIENT_SECRET', 'MS_GRAPH_CLIENT_SECRET'],
+        '--site-id': ['GRAPH_SITE_ID', 'SITE_ID'],
+        '--drive-id': ['GRAPH_DRIVE_ID', 'DRIVE_ID'],
+        '--output-dir': ['GRAPH_OUTPUT_DIR', 'OUTPUT_DIR'],
+        '--batch-size': ['GRAPH_BATCH_SIZE', 'BATCH_SIZE'],
+        '--concurrency': ['GRAPH_CONCURRENCY', 'CONCURRENCY'],
+        '--page-size': ['GRAPH_PAGE_SIZE', 'PAGE_SIZE'],
+        '--export-json': ['GRAPH_EXPORT_JSON', 'EXPORT_JSON'],
+        '--export-csv': ['GRAPH_EXPORT_CSV', 'EXPORT_CSV'],
+        '--use-batch': ['GRAPH_USE_BATCH', 'USE_BATCH'],
+        '--use-beta': ['GRAPH_USE_BETA', 'USE_BETA'],
+    }
+
+    # Options that are flags (no value expected). If the env var is truthy,
+    # we add the option name alone. All other options are key/value pairs.
+    flag_options = {'--export-json', '--export-csv', '--use-batch', '--use-beta', '--no-per-item-get', '--no-progress', '--dry-run', '--verbose', '--fail-on-throttle'}
+
+    env_args: List[str] = []
+    for opt, env_vars in env_map.items():
+        val = None
+        # env_vars may be a list of candidate env var names
+        for ev in env_vars:
+            v = os.environ.get(ev)
+            if v is not None and v != "":
+                val = v
+                break
+        if val is None:
+            continue
+
+        # check if option already provided on CLI (either as `--opt value` or `--opt=value`)
+        present = False
+        for a in cli_args:
+            if a == opt or a.startswith(opt + "="):
+                present = True
+                break
+        if present:
+            continue
+
+        if opt in flag_options:
+            if str(val).lower() in ("1", "true", "yes", "on"):
+                env_args.append(opt)
+        else:
+            env_args.extend([opt, val])
+
+    # Place env defaults before CLI args so CLI values win when both are present.
+    sys.argv = [sys.argv[0]] + env_args + cli_args
+
+    # Parse args and run
+    args = parse_args()
+    try:
+        asyncio.run(main_async(args))
+    except KeyboardInterrupt:
+        LOG.info("Interrupted by user")

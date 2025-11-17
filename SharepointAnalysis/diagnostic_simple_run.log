@@ -1,0 +1,4 @@
+INFO:graph_drive_scanner_simple:Temporarily ignoring SIGINT for 5s (simple diagnostic)
+INFO:graph_drive_scanner_simple:SIGINT handler restored after ignore period
+INFO:graph_drive_scanner_simple:Dry-run mode: loading mock file
+INFO:graph_drive_scanner_simple:Dry-run exported to C:\Repo\casestudy\SharepointAnalysis\output\drive_analysis_simple.json

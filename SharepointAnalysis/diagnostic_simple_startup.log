@@ -1,0 +1,24 @@
+2025-11-17T22:08:10Z --- startup diagnostics (simple scanner) ---
+2025-11-17T22:08:10Z PID=30056 PPID=20404 PY=C:\Repo\casestudy\.venv\Scripts\python.exe
+2025-11-17T22:08:10Z CWD=C:\Repo\casestudy ARGV=.\SharepointAnalysis\graph_drive_scanner_simple.py --dry-run --ignore-sigint-seconds 5 --verbose USER=JoergBrors
+2025-11-17T22:08:10Z ENV GRAPH_TENANT_ID=<present len=36>
+2025-11-17T22:08:10Z ENV TENANT_ID=<missing>
+2025-11-17T22:08:10Z ENV GRAPH_CLIENT_ID=<present len=36>
+2025-11-17T22:08:10Z ENV CLIENT_ID=<missing>
+2025-11-17T22:08:10Z ENV GRAPH_CLIENT_SECRET=<present len=40>
+2025-11-17T22:08:10Z ENV CLIENT_SECRET=<missing>
+2025-11-17T22:08:10Z ENV DRIVE_ID=<missing>
+2025-11-17T22:08:10Z Temporarily ignoring SIGINT for 5s
+2025-11-17T22:08:15Z SIGINT handler restored after ignore period
+2025-11-17T22:09:24Z --- startup diagnostics (simple scanner) ---
+2025-11-17T22:09:24Z PID=24956 PPID=16220 PY=C:\Repo\casestudy\.venv\Scripts\python.exe
+2025-11-17T22:09:24Z CWD=C:\Repo\casestudy ARGV=.\SharepointAnalysis\graph_drive_scanner_simple.py --drive-id b!47z2fa2kOE-nHqWpGUu8yVsbnC4KYSFDnwdNPUJEe0bcXpVu_FG2SJXMRn1vb2k0 --concurrency 8 --page-size 200 --ignore-sigint-seconds 30 --verbose USER=JoergBrors
+2025-11-17T22:09:24Z ENV GRAPH_TENANT_ID=<present len=36>
+2025-11-17T22:09:24Z ENV TENANT_ID=<missing>
+2025-11-17T22:09:24Z ENV GRAPH_CLIENT_ID=<present len=36>
+2025-11-17T22:09:24Z ENV CLIENT_ID=<missing>
+2025-11-17T22:09:24Z ENV GRAPH_CLIENT_SECRET=<present len=40>
+2025-11-17T22:09:24Z ENV CLIENT_SECRET=<missing>
+2025-11-17T22:09:24Z ENV DRIVE_ID=<missing>
+2025-11-17T22:09:24Z Temporarily ignoring SIGINT for 30s
+2025-11-17T22:09:54Z SIGINT handler restored after ignore period
