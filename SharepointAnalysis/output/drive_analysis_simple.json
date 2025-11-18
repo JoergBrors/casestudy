@@ -1,0 +1,38 @@
+[
+  {
+    "id": "1",
+    "name": "FolderA",
+    "path": "/FolderA",
+    "size": 0,
+    "isFolder": false,
+    "quickXorHash": null,
+    "sensitivityLabelId": null,
+    "sensitivityLabelName": null,
+    "createdDateTime": "2022-01-01T00:00:00Z",
+    "lastModifiedDateTime": "2022-01-01T00:00:00Z"
+  },
+  {
+    "id": "2",
+    "name": "doc1.pdf",
+    "path": "/FolderA/doc1.pdf",
+    "size": 120000,
+    "isFolder": false,
+    "quickXorHash": null,
+    "sensitivityLabelId": null,
+    "sensitivityLabelName": null,
+    "createdDateTime": "2024-01-01T00:00:00Z",
+    "lastModifiedDateTime": "2024-06-01T00:00:00Z"
+  },
+  {
+    "id": "6",
+    "name": "duplicate.docx",
+    "path": "/FolderA/duplicate.docx",
+    "size": 2048,
+    "isFolder": false,
+    "quickXorHash": "DRYRUN_QUICKXOR_6",
+    "sensitivityLabelId": null,
+    "sensitivityLabelName": null,
+    "createdDateTime": "2024-02-01T00:00:00Z",
+    "lastModifiedDateTime": "2024-03-01T00:00:00Z"
+  }
+]

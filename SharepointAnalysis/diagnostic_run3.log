@@ -1,0 +1,5 @@
+C:\Repo\casestudy\SharepointAnalysis\graph_drive_scanner.py:86: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  df.write(f"{datetime.utcnow().isoformat()}Z {msg}\n")
+INFO:graph_drive_scanner:Holding start for 10s to allow diagnostic observation (PID=13652)
+INFO:graph_drive_scanner:Collecting folder structure and file list (fast scan)
+DEBUG:graph_drive_scanner:Refreshing access token

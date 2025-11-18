@@ -1,0 +1,6 @@
+aiohttp>=3.8.0
+tqdm>=4.60.0
+python-dateutil>=2.8.0
+# Optional (for Azure Key Vault support)
+azure-identity>=1.12.0
+azure-keyvault-secrets>=4.6.0

@@ -1,0 +1,54 @@
+2025-11-17T21:55:28.611827Z --- startup diagnostics ---
+2025-11-17T21:55:28.612844Z PID=2588 PPID=16684 PY=C:\Repo\casestudy\.venv\Scripts\python.exe
+2025-11-17T21:55:28.613392Z CWD=C:\Repo\casestudy ARGV=.\SharepointAnalysis\graph_drive_scanner.py --page-size 10 --concurrency 2 --progress-interval 1 --verbose --tenant-id dba912b0-8fba-4882-95f0-02e9da476781 --client-id 990bc8ba-4cdb-4152-ac6c-740793084968 --client-secret ZkX8Q~c6pu-T35jtVa_RAO8rc3g6DHBlbAwxtbJR --drive-id b!47z2fa2kOE-nHqWpGUu8yVsbnC4KYSFDnwdNPUJEe0bcXpVu_FG2SJXMRn1vb2k0 --site-id 7df6bce3-a4ad-4f38-a71e-a5a9194bbcc9 USER=JoergBrors
+2025-11-17T21:55:28.614359Z ENV GRAPH_TENANT_ID=<missing>
+2025-11-17T21:55:28.614693Z ENV TENANT_ID=<missing>
+2025-11-17T21:55:28.614995Z ENV GRAPH_CLIENT_ID=<missing>
+2025-11-17T21:55:28.615349Z ENV CLIENT_ID=<missing>
+2025-11-17T21:55:28.615619Z ENV GRAPH_CLIENT_SECRET=<missing>
+2025-11-17T21:55:28.615981Z ENV CLIENT_SECRET=<missing>
+2025-11-17T21:55:28.616328Z ENV SITE_ID=<missing>
+2025-11-17T21:55:28.617041Z ENV DRIVE_ID=<missing>
+2025-11-17T21:55:33.672640Z RECEIVED SIGNAL: 2
+2025-11-17T21:55:33.674754Z   File "C:\Repo\casestudy\SharepointAnalysis\graph_drive_scanner.py", line 1123, in <module>
+    asyncio.run(main_async(args))
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 204, in run
+    return runner.run(main)
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 706, in run_until_complete
+    self.run_forever()
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 677, in run_forever
+    self._run_once()
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 2008, in _run_once
+    event_list = self._selector.select(timeout)
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 446, in select
+    self._poll(timeout)
+  File "C:\Users\JoergBrors\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 775, in _poll
+    status = _overlapped.GetQueuedCompletionStatus(self._iocp, ms)
+
+2025-11-17T22:00:02.125893Z --- startup diagnostics ---
+2025-11-17T22:00:02.126370Z PID=13652 PPID=1748 PY=C:\Repo\casestudy\.venv\Scripts\python.exe
+2025-11-17T22:00:02.126764Z CWD=C:\Repo\casestudy ARGV=.\SharepointAnalysis\graph_drive_scanner.py --page-size 10 --concurrency 2 --progress-interval 1 --verbose --tenant-id dba912b0-8fba-4882-95f0-02e9da476781 --client-id 990bc8ba-4cdb-4152-ac6c-740793084968 --client-secret ZkX8Q~c6pu-T35jtVa_RAO8rc3g6DHBlbAwxtbJR --drive-id b!47z2fa2kOE-nHqWpGUu8yVsbnC4KYSFDnwdNPUJEe0bcXpVu_FG2SJXMRn1vb2k0 --site-id 7df6bce3-a4ad-4f38-a71e-a5a9194bbcc9 --hold-start-seconds 10 USER=JoergBrors
+2025-11-17T22:00:02.126985Z ENV GRAPH_TENANT_ID=<missing>
+2025-11-17T22:00:02.127180Z ENV TENANT_ID=<missing>
+2025-11-17T22:00:02.127361Z ENV GRAPH_CLIENT_ID=<missing>
+2025-11-17T22:00:02.127571Z ENV CLIENT_ID=<missing>
+2025-11-17T22:00:02.127919Z ENV GRAPH_CLIENT_SECRET=<missing>
+2025-11-17T22:00:02.128118Z ENV CLIENT_SECRET=<missing>
+2025-11-17T22:00:02.128376Z ENV SITE_ID=<missing>
+2025-11-17T22:00:02.128632Z ENV DRIVE_ID=<missing>
+2025-11-17T22:00:02.138048Z Hold start for 10s requested by CLI
+2025-11-17T22:00:20.737415Z RECEIVED SIGNAL: 2
+2025-11-17T22:01:35.807398Z --- startup diagnostics ---
+2025-11-17T22:01:35.807791Z PID=9116 PPID=21956 PY=C:\Repo\casestudy\.venv\Scripts\python.exe
+2025-11-17T22:01:35.808145Z CWD=C:\Repo\casestudy ARGV=.\SharepointAnalysis\graph_drive_scanner.py --page-size 10 --concurrency 2 --progress-interval 1 --verbose --tenant-id dba912b0-8fba-4882-95f0-02e9da476781 --client-id 990bc8ba-4cdb-4152-ac6c-740793084968 --client-secret ZkX8Q~c6pu-T35jtVa_RAO8rc3g6DHBlbAwxtbJR --drive-id b!47z2fa2kOE-nHqWpGUu8yVsbnC4KYSFDnwdNPUJEe0bcXpVu_FG2SJXMRn1vb2k0 --site-id 7df6bce3-a4ad-4f38-a71e-a5a9194bbcc9 --ignore-sigint-seconds 20 --only-progress USER=JoergBrors
+2025-11-17T22:01:35.808544Z ENV GRAPH_TENANT_ID=<missing>
+2025-11-17T22:01:35.808821Z ENV TENANT_ID=<missing>
+2025-11-17T22:01:35.809211Z ENV GRAPH_CLIENT_ID=<missing>
+2025-11-17T22:01:35.809523Z ENV CLIENT_ID=<missing>
+2025-11-17T22:01:35.809865Z ENV GRAPH_CLIENT_SECRET=<missing>
+2025-11-17T22:01:35.810112Z ENV CLIENT_SECRET=<missing>
+2025-11-17T22:01:35.810365Z ENV SITE_ID=<missing>
+2025-11-17T22:01:35.810644Z ENV DRIVE_ID=<missing>
+2025-11-17T22:01:35.820723Z Temporarily ignoring SIGINT for 20s

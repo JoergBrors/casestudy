@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1",
+    "name": "FolderA",
+    "parentReference": {"path": "/drive/root:"},
+    "folder": {},
+    "file": null,
+    "size": 0,
+    "createdDateTime": "2022-01-01T00:00:00Z",
+    "lastModifiedDateTime": "2022-01-01T00:00:00Z"
+  },
+  {
+    "id": "2",
+    "name": "doc1.pdf",
+    "parentReference": {"path": "/drive/root:/FolderA"},
+    "folder": null,
+    "file": {},
+    "size": 120000,
+    "createdDateTime": "2024-01-01T00:00:00Z",
+    "lastModifiedDateTime": "2024-06-01T00:00:00Z"
+  },
+  {
+    "id": "6",
+    "name": "duplicate.docx",
+    "parentReference": {"path": "/drive/root:/FolderA"},
+    "folder": null,
+    "file": {"hashes": {"quickXorHash": "DRYRUN_QUICKXOR_6"}},
+    "size": 2048,
+    "createdDateTime": "2024-02-01T00:00:00Z",
+    "lastModifiedDateTime": "2024-03-01T00:00:00Z"
+  }
+]
